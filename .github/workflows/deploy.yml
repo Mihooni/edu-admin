@@ -1,0 +1,89 @@
+name: Deploy
+
+# 本工作流只能从 Actions 标签页手动触发（"Run workflow"）——把应用部署到
+# 你自己的服务器。刻意不设 push 触发器：普通 push 会产生一次空的失败运行。
+#
+# 工作原理：
+#   1. 填入服务器的公网主机名 / IP、SSH 端口与用户（下方 inputs）。
+#      工作流通过 SSH 连接服务器（私钥来自仓库 Secrets 中的 SSH_PRIVATE_KEY）。
+#   2. 服务器上：缺 Docker 则自动安装 → 克隆本仓库 → 执行 ./deploy/deploy.sh
+#      （构建镜像、启动应用、初始化 SQLite 架构、可选灌示例数据）。
+#   3. 完成后管理后台即在 http://<host>/ 可访问（勾选 HTTPS 并给真实域名
+#      则为 https://）。
+#
+# 一次性设置：
+#   - 准备一台全新的 Ubuntu 22.04/24.04 服务器，开通 SSH root 访问。
+#   - 仓库 Settings → Secrets and variables → Actions 中添加 SSH_PRIVATE_KEY，
+#     值为可登录该服务器的私钥。
+#   - Actions 标签页 → Deploy → Run workflow，填主机名，点击运行。
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_host:
+        description: 服务器公网主机名（IP 或域名），如 203.0.113.5 或 app.example.com
+        required: true
+        type: string
+      ssh_port:
+        description: SSH 端口（默认 22）
+        required: false
+        default: "22"
+        type: string
+      ssh_user:
+        description: SSH 用户（默认 root）
+        required: false
+        default: "root"
+        type: string
+      use_https:
+        description: 自动 HTTPS（Let's Encrypt）—— 需要域名已解析到该服务器
+        required: false
+        default: false
+        type: boolean
+      seed_demo_data:
+        description: 灌入示例数据（管理员 13800000001 / 123456）
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure the SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: 信任服务器主机密钥
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${{ inputs.ssh_port }}" "${{ inputs.server_host }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - uses: actions/checkout@v4
+
+      - name: 在服务器上执行部署
+        env:
+          SERVER: ${{ inputs.server_host }}
+          PORT: ${{ inputs.ssh_port }}
+          USER: ${{ inputs.ssh_user }}
+          REPO: ${{ github.server_url }}/${{ github.repository }}
+          SEED: ${{ inputs.seed_demo_data }}
+          HTTPS: ${{ inputs.use_https }}
+        run: |
+          set -e
+          SKIP_SEED="1"
+          if [ "$SEED" = "true" ]; then SKIP_SEED=""; fi
+          ARGS=""
+          if [ "$HTTPS" != "true" ]; then ARGS="--no-https"; fi
+
+          # deploy/remote-deploy.sh 以 root 身份在服务器上运行；
+          # 环境变量经 ssh 命令行传入，保持脚本本身是可直接测试的纯 shell 文件。
+          scp -P "$PORT" deploy/remote-deploy.sh "$USER@$SERVER:/tmp/edu-admin-remote-deploy.sh"
+          ssh -p "$PORT" "$USER@$SERVER" \
+            "REPO='$REPO' SERVER='$SERVER' SKIP_SEED='$SKIP_SEED' ARGS='$ARGS' bash /tmp/edu-admin-remote-deploy.sh"
+
+      - name: 打印访问信息
+        run: |
+          PROTO="http"
+          if [ "${{ inputs.use_https }}" = "true" ]; then PROTO="https"; fi
+          echo "::notice title=部署完成::星课 StarClass 已上线 $PROTO://${{ inputs.server_host }}/ —— 管理员 13800000001 / 123456（登录后请改密）"

@@ -1,5 +1,8 @@
 # 星课 StarClass · 教培 / 健身机构一体化管理系统
 
+[![CI](https://github.com/Mihooni/edu-admin/actions/workflows/ci.yml/badge.svg)](https://github.com/Mihooni/edu-admin/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 > 专为小型与个人教培机构打造的一体化教务产品：**微信小程序（家长端 / 教练端 / 管理端）+ Web 管理后台**，覆盖招生、排课、考勤、家校沟通、销售、续费、薪资结算全流程。
 
 **零云服务依赖 · 数据完全归属机构 · clone 后一条命令跑起来**
@@ -7,6 +10,8 @@
 ---
 
 ## 🚀 一键部署（30 秒上手）
+
+**方式 A · 本机 / 旧电脑直接跑（免 Docker）**
 
 ```bash
 git clone https://github.com/Mihooni/edu-admin.git
@@ -16,7 +21,19 @@ bash deploy.sh
 
 脚本自动完成：**安装依赖 → 初始化数据库（含示例数据）→ 构建管理端 → 启动服务**。
 
-完成后打开：
+**方式 B · 正式上线到云服务器（Docker）**
+
+```bash
+git clone https://github.com/Mihooni/edu-admin.git
+cd edu-admin
+./deploy/deploy.sh --host app.yourdomain.com   # 自动 HTTPS；内网用 --no-https
+```
+
+单容器交付（API + 管理后台同端口），SQLite 在数据卷中跨升级保留。
+也可在 GitHub Actions 里点 **Deploy → Run workflow** 完成全自动部署，
+详见 [`deploy/README.md`](deploy/README.md)。
+
+两种方式完成后打开：
 
 | 服务 | 地址 | 说明 |
 |---|---|---|
@@ -163,9 +180,11 @@ curl http://localhost:3001/api/health
 | [`使用手册.md`](使用手册.md) | 各角色日常操作说明（招生 → 排课 → 考勤 → 续费全流程） |
 | [`docs/常见问题FAQ.md`](docs/常见问题FAQ.md) | 安装 / 使用 / 迁移 / 排障 全量问答 |
 | [`部署上线说明.md`](部署上线说明.md) | 公网部署、HTTPS、小程序发布、合法域名、数据备份、真机调试 |
+| [`deploy/README.md`](deploy/README.md) | Docker 一键部署（含 GitHub Actions 点一下部署） |
 | [`TEST-GUIDE.md`](TEST-GUIDE.md) | 改代码后的验证与回归门禁 |
 | [`CONVENTIONS.md`](CONVENTIONS.md) | 开发约定（设计 token、工程铁律、回归门禁） |
 | [`DESIGN.md`](DESIGN.md) | 设计系统规范（色彩 / 字体 / 组件 / 间距） |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`SECURITY.md`](SECURITY.md) · [`CHANGELOG.md`](CHANGELOG.md) | 贡献指南 / 漏洞报告 / 版本记录 |
 
 ---
 

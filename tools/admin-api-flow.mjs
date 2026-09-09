@@ -304,7 +304,7 @@ await step('系统设置（读取+保存+还原）', async () => {
   origOrg = r1.body.data.org_info || {};
   origService = r1.body.data.service_phone;
   origUniform = r1.body.data.uniform_price;
-  const save = await j('/settings', { method: 'PUT', headers: H, body: JSON.stringify({ org_info: { ...origOrg, name: '星课篮球训练营(测试)' }, service_phone: '13900000000', uniform_price: 60 }) });
+  const save = await j('/settings', { method: 'PUT', headers: H, body: JSON.stringify({ org_info: { ...origOrg, name: '星课篮球训练营(测试)' }, service_phone: '13800000000', uniform_price: 60 }) });
   if (save.body.code !== 0) throw new Error(JSON.stringify(save.body));
   const r2 = await j('/settings', { headers: H });
   if (r2.body.data.org_info.name !== '星课篮球训练营(测试)') throw new Error('设置保存未生效');

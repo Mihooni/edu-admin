@@ -1,0 +1,8 @@
+# Caddy v2 反向代理 —— 星课 StarClass
+#
+# 用自动 HTTPS（Let's Encrypt）在公网域名上托管管理后台。
+# 应用在 compose 网络中以 `app:3001` 可达。
+
+{$DOMAIN} {
+    reverse_proxy app:3001
+}

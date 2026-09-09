@@ -1,0 +1,38 @@
+# 星课 StarClass — Docker Compose
+#
+#   cp .env.example .env
+#   echo "JWT_SECRET=$(openssl rand -hex 32)" >> .env
+#   docker compose up -d --build
+#   docker compose exec app node db/init.js
+#   docker compose exec app node db/seed.js   # 可选：示例数据
+#
+# 完整走查见 deploy/README.md；一条命令部署用 ./deploy/deploy.sh
+
+services:
+  app:
+    build: .
+    image: starclass-edu-admin
+    ports:
+      - "3001:3001"
+    environment:
+      # 容器内强制生产模式（未设 JWT_SECRET 会拒绝启动）
+      NODE_ENV: production
+      # SQLite 放在命名卷上，容器重建不丢数据
+      DB_PATH: /data/data.db
+    env_file:
+      - .env
+    volumes:
+      # 上传的图片等附件跨重建保留
+      - uploads:/app/backend/uploads
+      - data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  uploads:
+  data:

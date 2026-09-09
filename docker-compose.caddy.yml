@@ -1,0 +1,29 @@
+# 星课 StarClass — Caddy 边车（自动 HTTPS）
+#
+# 由 `./deploy/deploy.sh`（默认）与 GitHub Actions 一键部署工作流启用。
+# 为服务器公网域名自动申请 Let's Encrypt 证书，开箱得到 https://。
+#
+# 不单独运行 —— 它是 docker-compose.yml 的叠加层：
+#   DOMAIN=example.com docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?请把 DOMAIN 设置为公网域名，例如 your-server.example.com}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    networks:
+      - default
+
+volumes:
+  caddy_data:
+  caddy_config:

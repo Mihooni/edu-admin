@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend-tests:
+    name: 后端回归（Node ${{ matrix.node }}）
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: 安装后端依赖
+        working-directory: backend
+        run: npm ci
+
+      - name: 全量系统回归（256 项，自带隔离测试库与端口）
+        working-directory: backend
+        run: node tests/full-system.test.js
+
+      - name: 专项回归套件
+        working-directory: backend
+        run: |
+          node tests/class-module.test.js
+          node tests/audit-regression.cjs
+          node tests/lead-suggestions-regression.cjs
+          node tests/queue-regression.cjs
+
+  miniprogram-check:
+    name: 小程序静态校验（41 页）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: 页面完整性 + JS/JSON 语法门禁
+        run: node check-mp.mjs
+
+  web-build:
+    name: 管理后台构建（Node 20）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: 安装依赖
+        working-directory: web-admin
+        run: npm ci
+      - name: Vite 构建
+        working-directory: web-admin
+        run: npm run build
+
+  docker-build:
+    name: Docker 镜像构建冒烟
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 构建单镜像
+        run: docker build -t starclass-edu-admin:ci .
+      - name: 容器健康检查
+        run: |
+          docker run -d --name ci-app -e JWT_SECRET=ci-only-fake-secret -p 3001:3001 starclass-edu-admin:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1; then echo "healthy"; break; fi
+            if [ "$i" = "30" ]; then docker logs --tail 50 ci-app; exit 1; fi
+            sleep 1
+          done
+          docker exec ci-app node db/init.js
+          docker exec ci-app node -e "fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1))"
+          docker rm -f ci-app
+
+  sensitive-values:
+    name: 敏感信息门禁
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 拒绝已知敏感值
+        # 下列值是脱敏哨兵：任何被跟踪文件中再出现，说明真实凭证 / 个人信息
+        # 泄漏进了仓库（本 CI 定义文件自身除外）。
+        run: |
+          if git grep -nE '13900000000|wxd0[0-9a-f]{16}|/Users/huanghoodas|edu-admin-secret|CLOUD_ENV|TENCENT_SMS' -- ':!package-lock.json' ':!.github/workflows/ci.yml'; then
+            echo "在被跟踪文件中发现敏感值 —— 拒绝合入。"
+            exit 1
+          fi
+          echo "无敏感值。"
+
+      - name: 拒绝提交数据库 / 上传 / 备份文件
+        run: |
+          if git ls-files | grep -E 'data\.db|\.db$|backups/|backend/uploads/'; then
+            echo "发现被提交的数据库、备份或上传文件 —— 拒绝合入。"
+            exit 1
+          fi
+          echo "无运行数据入库。"

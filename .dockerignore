@@ -1,0 +1,36 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+# 依赖（镜像内重新安装）
+backend/node_modules
+web-admin/node_modules
+node_modules
+
+# 构建产物（镜像内重新构建）
+web-admin/dist
+
+# 运行数据 —— 绝不进镜像
+backend/db/data.db
+backend/db/data.db-wal
+backend/db/data.db-shm
+backend/uploads
+backend/backups
+backups
+
+# 小程序（不进镜像，微信开发者工具单独导入）
+miniprogram
+project.config.json
+
+# CI / 本地工具 / 文档档案
+.github
+tools
+design-previews
+design
+*.log
+.DS_Store
+backend.pid
+webadmin.pid
+backend/tests/reports

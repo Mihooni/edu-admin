@@ -66,9 +66,9 @@ r = await raw('/settings', { token: pt, m: 'PUT', b: { service_phone: 'x' } })
 assert('家长改设置被拒', r.status === 403 || r.body.code !== 0, `status=${r.status}`)
 
 // 3.2 设置字符串类型保持(客服电话/球服价格为字符串而非被 JSON.parse 转数字)
-await raw('/settings', { token, m: 'PUT', b: { service_phone: '13900000000', uniform_price: '60' } })
+await raw('/settings', { token, m: 'PUT', b: { service_phone: '13800000000', uniform_price: '60' } })
 r = await raw('/settings', { token })
-assert('客服电话保持字符串', r.body.data?.service_phone === '13900000000', `type=${typeof r.body.data?.service_phone} val=${r.body.data?.service_phone}`)
+assert('客服电话保持字符串', r.body.data?.service_phone === '13800000000', `type=${typeof r.body.data?.service_phone} val=${r.body.data?.service_phone}`)
 assert('球服价格保持字符串', r.body.data?.uniform_price === '60', `type=${typeof r.body.data?.uniform_price} val=${r.body.data?.uniform_price}`)
 
 // 3.1 成员数据越权（家长传他人 studentId 应被拒）

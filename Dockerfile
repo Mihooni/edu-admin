@@ -1,0 +1,45 @@
+# syntax=docker/dockerfile:1
+#
+# 星课 StarClass — 单镜像构建（后端 API + Web 管理后台同端口托管）
+#
+# 构建阶段：后端生产依赖 + 管理后台 Vite 构建
+# 运行阶段：Express 同端口托管 API 与构建产物
+# 容器以非特权 node 用户运行；/data 卷存放 SQLite，/app/backend/uploads 存放附件
+
+# ---------- Builder ----------
+FROM node:20-slim AS builder
+WORKDIR /app
+
+# 先装后端生产依赖（better-sqlite3 对 node:20-slim 有预编译产物，无需编译工具链）
+COPY backend/package.json backend/package-lock.json ./backend/
+RUN cd backend && npm ci --omit=dev
+
+# 安装管理后台依赖并构建
+COPY web-admin/package.json web-admin/package-lock.json ./web-admin/
+RUN cd web-admin && npm ci
+COPY backend ./backend
+COPY web-admin ./web-admin
+RUN cd web-admin && npm run build
+
+# ---------- Runtime ----------
+FROM node:20-slim AS runtime
+WORKDIR /app/backend
+
+ENV NODE_ENV=production
+ENV DB_PATH=/data/data.db
+ENV PORT=3001
+
+# 命名卷以镜像内属主初始化，先建目录再降权
+RUN mkdir -p /data uploads && chown node:node /data uploads
+USER node
+
+COPY --from=builder --chown=node:node /app/backend/package.json ./
+COPY --from=builder --chown=node:node /app/backend/node_modules ./node_modules/
+COPY --from=builder --chown=node:node /app/backend ./
+COPY --from=builder --chown=node:node /app/web-admin/dist ../web-admin/dist
+
+EXPOSE 3001
+
+# server.js 相对自身解析 uploads/ 与 ../web-admin/dist，
+# 因此 WORKDIR /app/backend 保证 `docker compose exec app node db/init.js` 可用
+CMD ["node", "server.js"]

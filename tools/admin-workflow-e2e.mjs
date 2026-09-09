@@ -129,16 +129,16 @@ try {
   const save = await call('/settings', ah, {
     m: 'PUT',
     b: {
-      org_info: { name: '星课E2E', phone: '13900000000', address: '', description: '' },
-      service_phone: '13900000000', uniform_price: 60,
+      org_info: { name: '星课E2E', phone: '13800000000', address: '', description: '' },
+      service_phone: '13800000000', uniform_price: 60,
     },
   })
   assert('设置保存', save.code === 0)
   await call('/settings', ah, {
     m: 'PUT',
     b: {
-      org_info: before.org_info || { name: '星课', phone: '13900000000', address: '', description: '' },
-      service_phone: before.service_phone || '13900000000',
+      org_info: before.org_info || { name: '星课', phone: '13800000000', address: '', description: '' },
+      service_phone: before.service_phone || '13800000000',
       uniform_price: before.uniform_price || 60,
     },
   })
