@@ -29,8 +29,10 @@ ENV NODE_ENV=production
 ENV DB_PATH=/data/data.db
 ENV PORT=3001
 
-# 命名卷以镜像内属主初始化，先建目录再降权
-RUN mkdir -p /data uploads && chown node:node /data uploads
+# 命名卷以镜像内属主初始化，先建目录（data/uploads/backups）再降权；
+# /app/backend 本身也要 chown，否则 node 用户启动时无法在运行时创建子目录
+RUN mkdir -p /data /app/backend/uploads /app/backend/backups \
+    && chown -R node:node /data /app/backend
 USER node
 
 COPY --from=builder --chown=node:node /app/backend/package.json ./

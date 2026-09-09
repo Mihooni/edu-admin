@@ -16,7 +16,7 @@ for (const f of ['/tmp/audit_test.db', '/tmp/audit_test.db-wal', '/tmp/audit_tes
 }
 
 const db = require('../db'); // 触发 init schema + 全部迁移（含 007_audit_log）
-const { now, generateId } = require('../utils');
+const { now, formatDate, generateId } = require('../utils');
 const checkinRouter = require('../routes/checkin');
 const schedulesRouter = require('../routes/schedules');
 const classesRouter = require('../routes/classes');
@@ -71,10 +71,11 @@ const seed = db.transaction(() => {
     'cm1', 'class1', 'stu1', 'member', t);
   ins("INSERT OR IGNORE INTO class_members (id, class_id, student_id, role, joined_at) VALUES (?,?,?,?,?)",
     'cm2', 'class2', 'stu2', 'member', t);
-  // 公开排期（无班级限制）
+  // 公开排期（无班级限制）。date 用当天、时间段全天，保证家长扫码签到的时间窗口
+  // （开始前 2h 至结束后 2h）在任意运行时刻都覆盖"现在"，测试与真实日期无关。
   ins(`INSERT OR IGNORE INTO schedules (id, course_id, course_name, teacher_id, date, start_time, end_time, max_students, enrolled_count, status, class_id)
        VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-    'sched_pub', 'course1', '篮球基础班', '', '2026-08-26', '18:00', '19:30', 20, 0, 'scheduled', '');
+    'sched_pub', 'course1', '篮球基础班', '', formatDate(t), '00:00', '23:59', 20, 0, 'scheduled', '');
   // 班级排期1（class1 / stu1）
   ins(`INSERT OR IGNORE INTO schedules (id, course_id, course_name, teacher_id, date, start_time, end_time, max_students, enrolled_count, status, class_id)
        VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
