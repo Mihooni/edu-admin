@@ -1,0 +1,753 @@
+/**
+ * 成员路由 — 成员 CRUD、家长绑定成员列表、二维码、首页数据
+ * POST /api/students              — 创建成员
+ * GET  /api/students              — 成员列表（搜索 + 分页）
+ * GET  /api/students/my           — 当前家长绑定的成员
+ * GET  /api/students/:id          — 成员详情（含绑定家长、会员卡、积分）
+ * PUT  /api/students/:id          — 更新成员
+ * POST /api/students/:id/qrcode   — 生成签到二维码内容
+ * GET  /api/students/home/data    — 首页数据（成员信息 + 会员卡 + 今日活动）
+ */
+const express = require('express');
+const router = express.Router();
+const crypto = require('crypto');
+const db = require('../db');
+const { generateId, success, fail, safeFail, getOpenId, escapeLike, now, parsePagination, isStaffReq, isCoachReq, hasPerm, getReqUser } = require('../utils');
+
+// 兼容迁移：会员编号 + 归档标记（退费/流失可归档隐藏，不删除）
+try { db.prepare("ALTER TABLE students ADD COLUMN member_no TEXT DEFAULT ''").run(); } catch (e) { /* 已存在 */ }
+try { db.prepare("ALTER TABLE students ADD COLUMN archived INTEGER DEFAULT 0").run(); } catch (e) { /* 已存在 */ }
+try { db.prepare("ALTER TABLE students ADD COLUMN qr_exp INTEGER DEFAULT 0").run(); } catch (e) { /* 已存在 */ }
+// 回填会员编号（NO-0001 起，按创建时间排序）
+try {
+  const empty = db.prepare("SELECT COUNT(*) c FROM students WHERE member_no = '' OR member_no IS NULL").get().c;
+  if (empty > 0) {
+    const rows = db.prepare('SELECT id FROM students ORDER BY created_at ASC, id ASC').all();
+    rows.forEach((r, i) => {
+      db.prepare("UPDATE students SET member_no = ? WHERE id = ?").run(`NO-${String(i + 1).padStart(4, '0')}`, r.id);
+    });
+  }
+} catch (e) { /* 回填失败不阻塞 */ }
+
+// 认证中间件
+function requireAuth(req, res, next) {
+  const openid = getOpenId(req);
+  if (!openid) return res.status(401).json(safeFail('未登录'));
+  req.openid = openid;
+  next();
+}
+
+// 管理员判断（兼容 JWT 与 x-openid 开发模式）
+function isAdminReq(req) {
+  if (req.userRole === 'admin') return true;
+  if (req.openid) {
+    const u = db.prepare('SELECT role FROM users WHERE openid = ?').get(req.openid);
+    return !!(u && u.role === 'admin');
+  }
+  return false;
+}
+
+// 成员查看权限：管理端员工或拥有「students」权限的员工（如销售）
+function canViewStudents(req) {
+  return isStaffReq(req) || hasPerm(getReqUser(req), 'students');
+}
+
+/**
+ * POST /api/students — 创建成员
+ * Body: { name, gender, birthday, school, grade, hobby, remark, phone, parentName }
+ */
+router.post('/', (req, res) => {
+  try {
+    if (!isAdminReq(req)) return res.status(403).json(safeFail('仅管理员可新增成员'));
+    const { name, gender, birthday, school, grade, hobby, remark, level, height, weight, bmi, phone, parentName } = req.body;
+    if (!name) return res.json(fail('成员姓名不能为空'));
+
+    const id = generateId('stu_');
+    db.prepare(`
+      INSERT INTO students (id, name, gender, birthday, school, grade, hobby, level, height, weight, bmi, remark, status, join_date, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+    `).run(id, name, gender || '', birthday || '', school || '', grade || '', hobby || '', level || '',
+      height !== undefined && height !== '' ? Number(height) : 0,
+      weight !== undefined && weight !== '' ? Number(weight) : 0,
+      bmi !== undefined && bmi !== '' ? Number(bmi) : 0,
+      remark || '', now(), now(), now());
+
+    // 录入家长手机号时，同时建立绑定关系与家长账号，便于手机号登录
+    if (phone && /^1[3-9]\d{9}$/.test(phone)) {
+      const parentNameVal = parentName || `${name}家长`;
+      const openid = `phone_${phone}`;
+      const existingUser = db.prepare('SELECT id FROM users WHERE phone = ?').get(phone);
+      if (!existingUser) {
+        db.prepare(`
+          INSERT INTO users (id, openid, phone, nickname, avatar, role, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, '', 'parent', 'active', ?, ?)
+        `).run(generateId('user_'), openid, phone, parentNameVal, now(), now());
+      } else {
+        // 保留微信身份账号的 openid（wx_ 前缀），避免再次微信登录时账号分裂
+        if (!String(existingUser.openid || '').startsWith('wx_')) {
+          db.prepare('UPDATE users SET openid = ? WHERE phone = ?').run(openid, phone);
+        }
+      }
+      // 绑定记录使用该手机号用户的实际 openid（微信身份为 wx_ 前缀），保证登录后可见绑定
+      const bindOpenid = existingUser ? String(existingUser.openid || '') : openid;
+      // 去重：同一成员同一家长手机号只保留一条绑定
+      const dupBind = db.prepare('SELECT 1 FROM parent_bindings WHERE student_id = ? AND parent_phone = ?').get(id, phone);
+      if (!dupBind) {
+        db.prepare(`
+          INSERT INTO parent_bindings (student_id, student_name, parent_name, parent_openid, parent_phone, relation, is_main, created_at)
+          VALUES (?, ?, ?, ?, ?, '家长', 1, ?)
+        `).run(id, name, parentNameVal, bindOpenid, phone, now());
+      }
+    }
+
+    res.json(success({ id, name }));
+  } catch (err) {
+    res.status(500).json(safeFail("操作失败，请稍后重试"));
+  }
+});
+
+/**
+ * POST /api/students/import — 批量导入成员（CSV 解析后由前端提交 JSON）
+ * Body: { rows: [{ name, gender, birthday, school, grade, level, parentName, phone, remark }] }
+ * 返回 { success, failed: [{ row, reason }] }
+ */
+router.post('/import', (req, res) => {
+  try {
+    if (!isAdminReq(req)) return res.status(403).json(safeFail('仅管理员可导入成员'));
+    const rows = Array.isArray(req.body.rows) ? req.body.rows : [];
+    if (!rows.length) return res.json(fail('未提供导入数据'));
+    if (rows.length > 2000) return res.json(fail('单次最多导入 2000 条'));
+
+    // 整批原子导入：任一行失败回滚全部，避免部分提交留下脏数据
+    const runImport = db.transaction(() => {
+      const okCount = [];
+      const failed = [];
+      rows.forEach((r, idx) => {
+        const name = String(r.name || '').trim();
+        if (!name) {
+          failed.push({ row: idx + 2, reason: '姓名不能为空' });
+          return;
+        }
+        const id = generateId('stu_');
+        const t = now();
+        const statusVal = String(r.status || '').trim() || 'active';
+        const joinRaw = String(r.joinDate || r.join_date || '').trim();
+        const joinDateVal = joinRaw ? new Date(joinRaw + 'T12:00:00').getTime() || t : t;
+        db.prepare(`
+          INSERT INTO students (id, name, gender, birthday, school, grade, level, remark, status, join_date, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(id, name, String(r.gender || '').trim(), String(r.birthday || '').trim(), String(r.school || '').trim(),
+          String(r.grade || '').trim(), String(r.level || '').trim(), String(r.remark || '').trim(), statusVal, joinDateVal, t, t);
+
+        const phone = String(r.phone || '').trim();
+        if (phone && /^1[3-9]\d{9}$/.test(phone)) {
+          const parentNameVal = String(r.parentName || '').trim() || `${name}家长`;
+          const openid = `phone_${phone}`;
+          const existingUser = db.prepare('SELECT id, openid FROM users WHERE phone = ?').get(phone);
+          if (!existingUser) {
+            db.prepare(`
+              INSERT INTO users (id, openid, phone, nickname, avatar, role, status, created_at, updated_at)
+              VALUES (?, ?, ?, ?, '', 'parent', 'active', ?, ?)
+            `).run(generateId('user_'), openid, phone, parentNameVal, t, t);
+          } else {
+            // 保留微信身份账号的 openid（wx_ 前缀），避免再次微信登录时账号分裂
+            if (!String(existingUser.openid || '').startsWith('wx_')) {
+              db.prepare('UPDATE users SET openid = ? WHERE phone = ?').run(openid, phone);
+            }
+          }
+          const bindOpenid = existingUser ? String(existingUser.openid || '') : openid;
+          const dupBind = db.prepare('SELECT 1 FROM parent_bindings WHERE student_id = ? AND parent_phone = ?').get(id, phone);
+          if (!dupBind) {
+            db.prepare(`
+              INSERT INTO parent_bindings (student_id, student_name, parent_name, parent_openid, parent_phone, relation, is_main, created_at)
+              VALUES (?, ?, ?, ?, ?, '家长', 1, ?)
+            `).run(id, name, parentNameVal, bindOpenid, phone, t);
+          }
+        }
+        okCount.push({ name, phone });
+      });
+
+      // 仅回填缺失的会员编号，保留已有编号（从现有最大值继续，不整体重排）
+      const empty = db.prepare("SELECT COUNT(*) c FROM students WHERE member_no = '' OR member_no IS NULL").get().c;
+      if (empty > 0) {
+        const maxNo = db.prepare("SELECT member_no FROM students WHERE member_no LIKE 'NO-%'").all()
+          .map(x => { const m = /^NO-(\d+)$/.exec(x.member_no || ''); return m ? parseInt(m[1], 10) : 0; })
+          .reduce((a, b) => Math.max(a, b), 0);
+        let next = maxNo;
+        const empties = db.prepare("SELECT id FROM students WHERE member_no = '' OR member_no IS NULL ORDER BY created_at ASC, id ASC").all();
+        const upd = db.prepare("UPDATE students SET member_no = ? WHERE id = ?");
+        empties.forEach(s => {
+          next += 1;
+          upd.run(`NO-${String(next).padStart(4, '0')}`, s.id);
+        });
+      }
+
+      return { okCount, failed };
+    });
+
+    const { okCount, failed } = runImport();
+    res.json(success({ success: okCount.length, failed, created: okCount.length }));
+  } catch (err) {
+    console.error('[students import]', err);
+    res.status(500).json(safeFail('导入失败，请稍后重试'));
+  }
+});
+
+/**
+ * GET /api/students — 成员列表（支持 keyword 搜索 + 分页）
+ * Query: { keyword, status, page, pageSize }
+ * 返回聚合字段：剩余课时、累计消费、购买次数、家长手机号、到期日期等
+ */
+router.get('/', (req, res) => {
+  try {
+    // 成员列表仅管理端工作人员（管理员/教练）可查看，家长端使用 /students/my
+    if (!canViewStudents(req)) return res.status(403).json(safeFail('无成员查看权限'));
+    const { keyword, status, project, sort, archived, startDate, endDate } = req.query;
+    const { page, pageSize, offset } = parsePagination(req.query);
+
+    let where = 'WHERE 1=1';
+    let params = [];
+    if (archived === '1') {
+      where += ' AND s.archived = 1';
+    } else {
+      where += ' AND s.archived = 0';
+    }
+    if (status === 'active') {
+      where += " AND EXISTS (SELECT 1 FROM member_cards mc WHERE mc.student_id = s.id AND mc.status = 'active' AND mc.expires_at > strftime('%s','now')*1000)";
+    } else if (status === 'paused') {
+      where += " AND EXISTS (SELECT 1 FROM member_cards mc WHERE mc.student_id = s.id AND mc.status = 'paused')";
+    } else if (status === 'refunded') {
+      where += " AND EXISTS (SELECT 1 FROM member_cards mc WHERE mc.student_id = s.id AND mc.status = 'refunded')";
+    } else if (status === 'graduated') {
+      // 已结束：持有过会员卡但当前无进行中/暂停/退费卡，且近期仍有出勤（区别于流失）
+      where += ` AND EXISTS (SELECT 1 FROM member_cards mc WHERE mc.student_id = s.id)
+        AND NOT EXISTS (SELECT 1 FROM member_cards mc2 WHERE mc2.student_id = s.id
+          AND (mc2.status = 'active' AND mc2.expires_at > strftime('%s','now')*1000
+            OR mc2.status IN ('paused','refunded')))
+        AND EXISTS (SELECT 1 FROM attendances a WHERE a.student_id = s.id AND a.date >= date('now', '-30 days'))`;
+    } else if (status === 'churn') {
+      where += ` AND EXISTS (SELECT 1 FROM member_cards mc WHERE mc.student_id = s.id)
+        AND NOT EXISTS (SELECT 1 FROM member_cards mc2 WHERE mc2.student_id = s.id
+          AND mc2.status = 'active' AND mc2.expires_at > strftime('%s','now')*1000)
+        AND NOT EXISTS (SELECT 1 FROM attendances a WHERE a.student_id = s.id AND a.date >= date('now', '-30 days'))`;
+    }
+    if (project) {
+      where += ` AND EXISTS (
+        SELECT 1 FROM member_cards mc2
+        WHERE mc2.student_id = s.id AND mc2.status = 'active' AND mc2.card_type_name = ?
+      )`;
+      params.push(project);
+    }
+    if (keyword) {
+      where += ` AND (s.name LIKE ? ESCAPE '\\' OR s.school LIKE ? ESCAPE '\\' OR s.grade LIKE ? ESCAPE '\\'
+        OR EXISTS (SELECT 1 FROM parent_bindings pb2 WHERE pb2.student_id = s.id AND pb2.parent_phone LIKE ? ESCAPE '\\')
+        OR EXISTS (SELECT 1 FROM parent_bindings pb3 WHERE pb3.student_id = s.id AND pb3.parent_name LIKE ? ESCAPE '\\'))`;
+      const kw = `%${escapeLike(keyword)}%`;
+      params.push(kw, kw, kw, kw, kw);
+    }
+    if (startDate) { where += ' AND s.join_date >= ?'; params.push(startDate); }
+    if (endDate) { where += ' AND s.join_date <= ?'; params.push(endDate); }
+
+    const total = db.prepare(`SELECT COUNT(*) as count FROM students s ${where}`).get(...params).count;
+    // 排序：默认按创建时间倒序；sort=expiring 时按有效会员卡到期时间升序（最早到期在前）
+    const orderBy = sort === 'expiring'
+      ? `ORDER BY
+          CASE WHEN (SELECT MIN(mc4.expires_at) FROM member_cards mc4
+            WHERE mc4.student_id = s.id AND mc4.status = 'active') IS NULL THEN 1 ELSE 0 END ASC,
+          (SELECT MIN(mc4.expires_at) FROM member_cards mc4
+            WHERE mc4.student_id = s.id AND mc4.status = 'active') ASC,
+          s.created_at DESC`
+      : 'ORDER BY s.created_at DESC';
+    const list = db.prepare(`
+      SELECT s.id, s.member_no, s.archived, s.name, s.gender, s.birthday, s.school, s.grade, s.hobby, s.level, s.remark,
+        s.status, s.join_date, s.created_at, s.updated_at,
+        CASE
+          WHEN s.birthday IS NOT NULL AND s.birthday != ''
+          THEN CAST((julianday('now') - julianday(s.birthday)) / 365.25 AS INTEGER)
+          ELSE NULL
+        END AS age,
+        (SELECT COALESCE(SUM(mc.remaining_classes), 0) FROM member_cards mc
+          WHERE mc.student_id = s.id AND mc.status = 'active' AND mc.billing_mode = 'count'
+            AND mc.expires_at > strftime('%s','now')*1000) AS remaining_classes,
+        (SELECT COUNT(*) FROM member_cards mc
+          WHERE mc.student_id = s.id AND mc.status = 'active' AND mc.billing_mode = 'time'
+            AND mc.expires_at > strftime('%s','now')*1000) AS time_card_count,
+        (CASE
+          WHEN EXISTS (SELECT 1 FROM member_cards mc WHERE mc.student_id = s.id AND mc.status = 'active' AND mc.expires_at > strftime('%s','now')*1000) THEN 'active'
+          WHEN EXISTS (SELECT 1 FROM member_cards mc WHERE mc.student_id = s.id AND mc.status = 'paused') THEN 'paused'
+          WHEN EXISTS (SELECT 1 FROM member_cards mc WHERE mc.student_id = s.id AND mc.status = 'refunded') THEN 'refunded'
+          WHEN EXISTS (SELECT 1 FROM member_cards mc WHERE mc.student_id = s.id)
+            AND NOT EXISTS (SELECT 1 FROM attendances a WHERE a.student_id = s.id AND a.date >= date('now', '-30 days')) THEN 'churn'
+          WHEN EXISTS (SELECT 1 FROM member_cards mc WHERE mc.student_id = s.id) THEN 'graduated'
+          ELSE 'none'
+        END) AS mem_status,
+        (SELECT MAX(mc.expires_at) FROM member_cards mc
+          WHERE mc.student_id = s.id AND mc.status = 'active') AS expires_at,
+        (SELECT mc.activated_at FROM member_cards mc
+          WHERE mc.student_id = s.id AND mc.status = 'active' ORDER BY mc.expires_at DESC LIMIT 1) AS card_start_date,
+        (SELECT mc.card_type_name FROM member_cards mc
+          WHERE mc.student_id = s.id AND mc.status = 'active' ORDER BY mc.expires_at DESC LIMIT 1) AS card_type_name,
+        (SELECT COALESCE(SUM(o.payable_amount), 0) FROM orders o
+          WHERE o.student_id = s.id AND o.status = 'paid') AS total_spent,
+        (SELECT COUNT(*) FROM orders o
+          WHERE o.student_id = s.id AND o.status = 'paid') AS purchase_count,
+        (SELECT MAX(o.paid_at) FROM orders o
+          WHERE o.student_id = s.id AND o.status = 'paid') AS latest_purchase_date,
+        (SELECT e.course_name FROM enrollments e
+          WHERE e.student_id = s.id AND e.status = 'active' ORDER BY e.created_at DESC LIMIT 1) AS project,
+        (SELECT pb.parent_phone FROM parent_bindings pb
+          WHERE pb.student_id = s.id ORDER BY pb.is_main DESC, pb.id ASC LIMIT 1) AS parent_phone,
+        (SELECT pb.parent_name FROM parent_bindings pb
+          WHERE pb.student_id = s.id ORDER BY pb.is_main DESC, pb.id ASC LIMIT 1) AS parent_name,
+        (SELECT MAX(a.checkin_time) FROM attendances a
+          WHERE a.student_id = s.id) AS last_activity_at
+      FROM students s ${where}
+      ${orderBy} LIMIT ? OFFSET ?
+    `).all(...params, pageSize, offset);
+
+    // 状态展示：归档优先；其次用会员卡派生状态（暂停/已结束/已退费/流失），避免列表恒显「正常」
+    const mapped = list.map((r) => ({ ...r, status: r.archived ? 'archived' : (r.mem_status || r.status) }));
+    res.json(success({ list: mapped, total, page, pageSize }));
+  } catch (err) {
+    res.status(500).json(safeFail("操作失败，请稍后重试"));
+  }
+});
+
+/**
+ * GET /api/students/my — 当前家长绑定的成员
+ */
+router.get('/my', (req, res) => {
+  try {
+    const openid = getOpenId(req);
+    if (!openid) return res.json(fail('未登录'));
+
+    const students = db.prepare(`
+      SELECT s.*, pb.relation, pb.is_main
+      FROM students s
+      JOIN parent_bindings pb ON pb.student_id = s.id
+      WHERE pb.parent_openid = ? AND s.status = 'active'
+    `).all(openid);
+
+    res.json(success(students));
+  } catch (err) {
+    res.status(500).json(safeFail("操作失败，请稍后重试"));
+  }
+});
+
+/**
+ * GET /api/students/home/data — 首页数据
+ * 返回当前成员信息、会员卡（含有效期）、今日活动
+ * 注意：必须放在 /:id 之前，否则会被 /:id 捕获
+ */
+router.get('/home/data', (req, res) => {
+  try {
+    const openid = getOpenId(req);
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    const tomorrowDate = new Date(now.getTime() + 86400000);
+    const tomorrow = `${tomorrowDate.getFullYear()}-${String(tomorrowDate.getMonth()+1).padStart(2,'0')}-${String(tomorrowDate.getDate()).padStart(2,'0')}`;
+
+    let student = null;
+    if (openid) {
+      // 支持指定孩子取数（多孩家庭）；未指定时取主绑定孩子（兼容旧行为）
+      const { studentId } = req.query || {};
+      const bind = studentId
+        ? db.prepare('SELECT student_id FROM parent_bindings WHERE parent_openid = ? AND student_id = ?').get(openid, studentId)
+        : db.prepare('SELECT student_id FROM parent_bindings WHERE parent_openid = ? AND student_id IS NOT NULL ORDER BY is_main DESC, id ASC LIMIT 1').get(openid);
+      if (bind) {
+        student = db.prepare('SELECT id, name, gender, birthday, school, grade, avatar FROM students WHERE id = ?').get(bind.student_id);
+      }
+    }
+    // 未登录时不返回随机学生数据
+    if (!student && !openid) {
+      return res.json(success({
+        student: null,
+        membership: null,
+        todayClass: null,
+        notices: [],
+      }));
+    }
+
+    let membership = null;
+    if (student) {
+      membership = db.prepare('SELECT * FROM member_cards WHERE student_id = ? AND status = ? ORDER BY expires_at ASC LIMIT 1').get(student.id, 'active');
+    }
+
+    // 某一天的训练活动（今天 / 明天共用同一构建逻辑）
+    const buildClassList = (dateStr) => {
+      const list = [];
+      const schedules = db.prepare('SELECT * FROM schedules WHERE date = ? AND status = ? ORDER BY start_time ASC').all(dateStr, 'scheduled');
+      for (const s of schedules) {
+        // 该活动报名状态（当前孩子是否已报名 + 报名孩子名单，供活动卡展示）
+        const enr = db.prepare(`
+          SELECT student_id, student_name FROM enrollments
+          WHERE schedule_id = ? AND status = 'active'
+        `).all(s.id);
+        // 已签到人数（供管理端今日活动卡统计）
+        const checkedIn = db.prepare(`
+          SELECT COUNT(*) as count FROM attendances
+          WHERE schedule_id = ? AND status IN ('present','late')
+        `).get(s.id).count;
+        list.push({
+          id: s.id,
+          title: s.course_name,
+          date: dateStr,
+          startTime: s.start_time,
+          endTime: s.end_time,
+          location: s.classroom_name,
+          coach: s.teacher_name,
+          status: s.status,
+          group_name: s.group_name || '',
+          group_course_id: s.group_course_id || '',
+          maxStudents: s.max_students || 0,
+          isEnrolled: student ? enr.some((e) => e.student_id === student.id) : false,
+          enrolledNames: enr.map((e) => e.student_name).filter(Boolean).join('、'),
+          enrolledCount: s.enrolled_count || enr.length,
+          checkedInCount: checkedIn,
+        });
+      }
+      return list;
+    };
+    const todayClasses = buildClassList(today);
+    const tomorrowClasses = buildClassList(tomorrow);
+    const todayClass = todayClasses.length > 0 ? todayClasses[0] : null;
+
+    res.json(success({
+      // 无绑定成员时返回 null，由前端展示"绑定学员"引导空状态
+      student: student ? { name: student.name, avatar: student.avatar || '' } : null,
+      membership: membership ? {
+        cardTypeName: membership.card_type_name,
+        billingMode: membership.billing_mode || 'time',
+        totalClasses: membership.total_classes,
+        remainingClasses: membership.remaining_classes,
+        expiresAt: membership.expires_at,
+        daysLeft: Math.max(0, Math.ceil((membership.expires_at - Date.now()) / 86400000)),
+        status: membership.status,
+      } : null,
+      todayClass,
+      todayClasses,
+      tomorrowClasses,
+      todayClassCount: todayClasses.length,
+    }));
+  } catch (err) {
+    res.status(500).json(safeFail("操作失败，请稍后重试"));
+  }
+});
+
+/**
+ * GET /api/students/:id — 成员详情（含绑定家长、会员卡、积分）
+ */
+router.get('/:id', requireAuth, (req, res) => {
+  try {
+    const { id } = req.params;
+    // 只返回必要字段，不暴露敏感信息
+    const student = db.prepare('SELECT id, member_no, archived, name, gender, birthday, school, grade, level, height, weight, bmi, avatar, status, join_date, remark FROM students WHERE id = ?').get(id);
+    if (!student) return res.status(404).json(safeFail('成员不存在'));
+
+    // 验证当前用户是否绑定了该成员（家长）或为管理端工作人员（管理员/教练）
+    const bind = db.prepare('SELECT 1 FROM parent_bindings WHERE student_id = ? AND parent_openid = ?').get(id, req.openid);
+    if (!bind && !canViewStudents(req)) return res.status(403).json(safeFail('无权访问该成员信息'));
+
+    // 绑定家长
+    const parents = db.prepare('SELECT parent_name, parent_phone, relation, is_main FROM parent_bindings WHERE student_id = ?').all(id);
+    // 会员卡（仅返回基本信息）
+    const cards = db.prepare(`
+      SELECT id, order_id, card_type_name, total_classes, remaining_classes, expires_at, status,
+        paused_at, pause_total_ms, pause_reason
+      FROM member_cards WHERE student_id = ? ORDER BY created_at DESC
+    `).all(id);
+    // 积分（仅返回余额）
+    const points = db.prepare('SELECT balance FROM points WHERE student_id = ?').get(id);
+    // 登记
+    const enrollments = db.prepare('SELECT id, course_name, status, created_at FROM enrollments WHERE student_id = ? ORDER BY created_at DESC LIMIT 10').all(id);
+    // 消费记录
+    const orders = db.prepare('SELECT id, order_no, order_type, payable_amount, status, paid_at FROM orders WHERE student_id = ? ORDER BY created_at DESC LIMIT 10').all(id);
+
+    res.json(success({ ...student, parents, cards, points, enrollments, orders }));
+  } catch (err) {
+    console.error('[getStudent]', err);
+    res.status(500).json(safeFail('获取成员信息失败'));
+  }
+});
+
+/**
+ * GET /api/students/:id/timeline — 成员时间线（聚合报名/购卡/签到/请假/积分/反馈）
+ * 借鉴 trycompai/crm 的 Activity feed：按时间倒序展示该成员的全部互动记录
+ */
+router.get('/:id/timeline', requireAuth, (req, res) => {
+  try {
+    const { id } = req.params;
+    const student = db.prepare('SELECT id, name FROM students WHERE id = ?').get(id);
+    if (!student) return res.status(404).json(safeFail('成员不存在'));
+    const bind = db.prepare('SELECT 1 FROM parent_bindings WHERE student_id = ? AND parent_openid = ?').get(id, req.openid);
+    if (!bind && !canViewStudents(req)) return res.status(403).json(safeFail('无权访问该成员信息'));
+
+    const events = [];
+    const push = (type, title, detail, eventAt, meta) => {
+      events.push({ type, title, detail: detail || '', eventAt: eventAt || now(), meta: meta || {} });
+    };
+
+    // 报名活动
+    const sources = [
+      () => db.prepare('SELECT course_name, status, created_at FROM enrollments WHERE student_id = ?').all(id)
+        .map((r) => ({ type: 'enroll', title: `报名活动「${r.course_name || ''}」`, detail: `状态：${r.status === 'active' ? '已报名' : r.status}`, eventAt: r.created_at })),
+      () => db.prepare('SELECT order_no, items, payable_amount, status, paid_at, created_at FROM orders WHERE student_id = ? ORDER BY created_at DESC LIMIT 100').all(id)
+        .map((r) => {
+          let itemText = '';
+          try {
+            const items = JSON.parse(r.items || '[]');
+            itemText = items.map((i) => i.itemName || '').filter(Boolean).join('、');
+          } catch (e) { /* 忽略 */ }
+          return { type: 'order', title: `购买「${itemText || '产品'}」`, detail: `金额 ¥${Number(r.payable_amount || 0).toLocaleString()}，状态：${r.status === 'paid' ? '已支付' : r.status}`, eventAt: r.paid_at || r.created_at, meta: { orderNo: r.order_no } };
+        }),
+      () => db.prepare('SELECT date, status FROM attendances WHERE student_id = ? ORDER BY date DESC LIMIT 200').all(id)
+        .map((r) => {
+          const text = { present: '已签到', late: '迟到', absent: '缺勤', leave: '请假' }[r.status] || r.status;
+          const ts = Date.parse(r.date) || now();
+          return { type: 'attendance', title: `${r.date} ${text}`, detail: '课程出勤记录', eventAt: ts };
+        }),
+      () => db.prepare('SELECT date, start_time, reason, status, created_at FROM leave_requests WHERE student_id = ?').all(id)
+        .map((r) => ({ type: 'leave', title: `${r.date || ''} 请假`, detail: r.reason || '', eventAt: r.created_at })),
+      () => db.prepare('SELECT type, amount, reason, created_at FROM point_logs WHERE student_id = ? ORDER BY created_at DESC LIMIT 100').all(id)
+        .map((r) => {
+          const sign = r.type === 'consume' ? '-' : '+';
+          return { type: 'points', title: `积分${r.type === 'consume' ? '扣减' : '获得'} ${sign}${r.amount}`, detail: r.reason || '', eventAt: r.created_at };
+        }),
+      () => db.prepare('SELECT content, status, created_at FROM feedback WHERE student_id = ?').all(id)
+        .map((r) => ({ type: 'feedback', title: '提交意见反馈', detail: r.content || '', eventAt: r.created_at })),
+    ];
+    for (const src of sources) {
+      try {
+        for (const e of src()) push(e.type, e.title, e.detail, e.eventAt, e.meta);
+      } catch (e) { /* 单类数据异常不阻塞时间线 */ }
+    }
+
+    events.sort((a, b) => b.eventAt - a.eventAt);
+    res.json(success({ student: { id: student.id, name: student.name }, list: events.slice(0, 100), total: events.length }));
+  } catch (err) {
+    console.error('[student timeline]', err);
+    res.status(500).json(safeFail('获取成员时间线失败'));
+  }
+});
+
+/**
+ * PUT /api/students/:id — 更新成员
+ */
+router.put('/:id', requireAuth, (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, gender, birthday, school, grade, hobby, remark, level, height, weight, bmi, status, parentPhone, parentName, memberNo, archived } = req.body;
+
+    const existing = db.prepare('SELECT id, name, status FROM students WHERE id = ?').get(id);
+    if (!existing) return res.status(404).json(safeFail('成员不存在'));
+
+    // 验证绑定关系
+    const bind = db.prepare('SELECT 1 FROM parent_bindings WHERE student_id = ? AND parent_openid = ?').get(id, req.openid);
+    const isAdmin = isAdminReq(req);
+    if (!bind && !isAdmin) return res.status(403).json(safeFail('无权修改该成员'));
+
+    // 家长（非管理员）仅可修改成员基础信息字段，禁止修改 status / archived / member_no 等管理字段
+    if (bind && !isAdmin) {
+      db.prepare(`
+        UPDATE students SET
+          name = COALESCE(?, name),
+          gender = COALESCE(?, gender),
+          birthday = COALESCE(?, birthday),
+          school = COALESCE(?, school),
+          grade = COALESCE(?, grade),
+          hobby = COALESCE(?, hobby),
+          level = COALESCE(?, level),
+          remark = COALESCE(?, remark),
+          updated_at = ?
+        WHERE id = ?
+      `).run(name, gender, birthday, school, grade, hobby, level, remark, now(), id);
+      return res.json(success({ id }));
+    }
+
+    // 管理员：可修改全部字段（含 status / archived / member_no）
+    db.prepare(`
+      UPDATE students SET
+        member_no = COALESCE(?, member_no),
+        archived = COALESCE(?, archived),
+        name = COALESCE(?, name),
+        gender = COALESCE(?, gender),
+        birthday = COALESCE(?, birthday),
+        school = COALESCE(?, school),
+        grade = COALESCE(?, grade),
+        hobby = COALESCE(?, hobby),
+        level = COALESCE(?, level),
+        height = COALESCE(?, height),
+        weight = COALESCE(?, weight),
+        bmi = COALESCE(?, bmi),
+        remark = COALESCE(?, remark),
+        status = ?,
+        updated_at = ?
+      WHERE id = ?
+    `).run(memberNo || null, archived !== undefined ? (archived ? 1 : 0) : null, name, gender, birthday, school, grade, hobby, level,
+      height !== undefined && height !== '' ? Number(height) : null,
+      weight !== undefined && weight !== '' ? Number(weight) : null,
+      bmi !== undefined && bmi !== '' ? Number(bmi) : null,
+      remark, status || existing.status, now(), id);
+
+    // 管理员可更新家长手机号/姓名绑定
+    if (isAdmin && parentPhone) {
+      const openid = `phone_${parentPhone}`;
+      const existingParent = db.prepare('SELECT id, parent_phone FROM parent_bindings WHERE student_id = ? ORDER BY is_main DESC, id ASC LIMIT 1').get(id);
+      const oldPhone = existingParent ? String(existingParent.parent_phone || '') : '';
+      const parentNameVal = parentName || '家长';
+      // 确定目标手机号的用户账号（保留微信身份 openid）
+      let targetUser = db.prepare('SELECT id, openid FROM users WHERE phone = ?').get(parentPhone);
+      if (!targetUser && oldPhone && oldPhone !== parentPhone) {
+        const legacyUser = db.prepare('SELECT id, openid FROM users WHERE phone = ?').get(oldPhone);
+        if (legacyUser) {
+          // 将原家长账号迁移到新手机号，避免新手机号登录产生孤立账号
+          db.prepare('UPDATE users SET phone = ?, updated_at = ? WHERE id = ?')
+            .run(parentPhone, now(), legacyUser.id);
+          if (!String(legacyUser.openid || '').startsWith('wx_')) {
+            db.prepare('UPDATE users SET openid = ? WHERE id = ?').run(openid, legacyUser.id);
+          }
+          targetUser = { id: legacyUser.id, openid: legacyUser.openid };
+        }
+      }
+      if (!targetUser) {
+        db.prepare(`
+          INSERT INTO users (id, openid, phone, nickname, avatar, role, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, '', 'parent', 'active', ?, ?)
+        `).run(generateId('user_'), openid, parentPhone, parentNameVal, now(), now());
+        targetUser = { id: '', openid };
+      } else if (!String(targetUser.openid || '').startsWith('wx_')) {
+        db.prepare('UPDATE users SET openid = ? WHERE id = ?').run(openid, targetUser.id);
+        targetUser.openid = openid;
+      }
+      // 绑定记录使用用户实际 openid（微信身份为 wx_ 前缀），保证登录后可见绑定
+      const bindOpenid = String(targetUser.openid || '');
+      if (existingParent) {
+        db.prepare('UPDATE parent_bindings SET parent_name = ?, parent_phone = ?, parent_openid = ? WHERE id = ?')
+          .run(parentNameVal, parentPhone, bindOpenid, existingParent.id);
+      } else {
+        // 去重：按手机号查找已有绑定，避免重复
+        const dupBind = db.prepare('SELECT id FROM parent_bindings WHERE student_id = ? AND parent_phone = ?').get(id, parentPhone);
+        if (dupBind) {
+          db.prepare('UPDATE parent_bindings SET parent_name = ?, parent_openid = ? WHERE id = ?')
+            .run(parentNameVal, bindOpenid, dupBind.id);
+        } else {
+          db.prepare(`
+            INSERT INTO parent_bindings (student_id, student_name, parent_name, parent_openid, parent_phone, relation, is_main, created_at)
+            VALUES (?, ?, ?, ?, ?, '家长', 1, ?)
+          `).run(id, name || existing.name, parentNameVal, bindOpenid, parentPhone, now());
+        }
+      }
+    }
+
+    res.json(success({ id }));
+  } catch (err) {
+    console.error('[updateStudent]', err);
+    res.status(500).json(safeFail('更新失败'));
+  }
+});
+
+/**
+ * DELETE /api/students/:id — 删除成员（软删除：状态置为已退费）
+ */
+router.delete('/:id', requireAuth, (req, res) => {
+  try {
+    const { id } = req.params;
+    const existing = db.prepare('SELECT id FROM students WHERE id = ?').get(id);
+    if (!existing) return res.status(404).json(safeFail('成员不存在'));
+    if (!isAdminReq(req)) return res.status(403).json(safeFail('仅管理员可删除成员'));
+
+    // 归档（软删除）并解绑家长绑定：避免家长端仍可见已退费成员，与课程删除级联一致
+    const tx = db.transaction(() => {
+      db.prepare("UPDATE students SET status = 'refunded', updated_at = ? WHERE id = ?").run(now(), id);
+      db.prepare('DELETE FROM parent_bindings WHERE student_id = ?').run(id);
+    });
+    tx();
+    res.json(success({ id, status: 'refunded' }));
+  } catch (err) {
+    console.error('[deleteStudent]', err);
+    res.status(500).json(safeFail('删除失败'));
+  }
+});
+
+/**
+ * GET /api/students/:id/stats — 成员训练统计（累计训练、到场率）
+ */
+router.get('/:id/stats', requireAuth, (req, res) => {
+  try {
+    const { id } = req.params;
+    const bind = db.prepare('SELECT 1 FROM parent_bindings WHERE student_id = ? AND parent_openid = ?').get(id, req.openid);
+    if (!bind && !canViewStudents(req)) return res.status(403).json(safeFail('无权访问该成员信息'));
+
+    const totalRow = db.prepare("SELECT COUNT(*) AS c FROM attendances WHERE student_id = ?").get(id);
+    const presentRow = db.prepare("SELECT COUNT(*) AS c FROM attendances WHERE student_id = ? AND status IN ('present','late')").get(id);
+    const total = totalRow ? totalRow.c : 0;
+    const present = presentRow ? presentRow.c : 0;
+    const attendanceRate = total > 0 ? Math.round((present / total) * 100) : 0;
+
+    res.json(success({ totalSessions: total, attendedSessions: present, attendanceRate }));
+  } catch (err) {
+    console.error('[studentStats]', err);
+    res.status(500).json(safeFail('获取训练统计失败'));
+  }
+});
+
+/**
+ * GET /api/students/:id/activities — 成员历史活动记录（按时间倒序）
+ */
+router.get('/:id/activities', requireAuth, (req, res) => {
+  try {
+    const { id } = req.params;
+    const bind = db.prepare('SELECT 1 FROM parent_bindings WHERE student_id = ? AND parent_openid = ?').get(id, req.openid);
+    if (!bind && !canViewStudents(req)) return res.status(403).json(safeFail('无权访问该成员信息'));
+
+    const list = db.prepare(`
+      SELECT a.id, a.schedule_id, a.status, a.date, a.checkin_time, s.start_time, s.course_name
+      FROM attendances a
+      LEFT JOIN schedules s ON s.id = a.schedule_id
+      WHERE a.student_id = ?
+      ORDER BY COALESCE(a.date, datetime(a.checkin_time/1000, 'unixepoch')) DESC
+      LIMIT 50
+    `).all(id);
+
+    res.json(success(list));
+  } catch (err) {
+    console.error('[studentActivities]', err);
+    res.status(500).json(safeFail('获取活动记录失败'));
+  }
+});
+
+/**
+ * POST /api/students/:id/qrcode — 生成签到二维码内容
+ * 返回一个可被扫码识别的唯一字符串
+ */
+router.post('/:id/qrcode', requireAuth, (req, res) => {
+  try {
+    const { id } = req.params;
+    const student = db.prepare('SELECT id FROM students WHERE id = ?').get(id);
+    if (!student) return res.status(404).json(safeFail('成员不存在'));
+
+    // 管理员/教练可在前台代生成签到码；家长须为绑定关系
+    if (!isCoachReq(req)) {
+      const bind = db.prepare('SELECT 1 FROM parent_bindings WHERE student_id = ? AND parent_openid = ?').get(id, req.openid);
+      if (!bind) return res.status(403).json(safeFail('无权操作该成员'));
+    }
+
+    // 生成签到二维码内容：随机 nonce + 60s 时效，避免离线伪造与重放
+    const QR_SECRET = process.env.JWT_SECRET || 'change-this-jwt-secret-before-deploy';
+    const nonce = crypto.randomBytes(12).toString('hex');
+    const exp = Date.now() + 60 * 1000;
+    const qrHash = crypto.createHash('sha256').update(`${id}:${nonce}:${exp}:${QR_SECRET}`).digest('hex').slice(0, 16);
+    const qrContent = `CHECKIN:${id}:${nonce}:${exp}:${qrHash}`;
+    db.prepare('UPDATE students SET qr_code = ?, qr_exp = ?, updated_at = ? WHERE id = ?').run(qrContent, exp, now(), id);
+
+    res.json(success({
+      studentId: student.id,
+      qrCode: qrContent,
+    }));
+  } catch (err) {
+    console.error('[qrcode]', err);
+    res.status(500).json(safeFail('生成二维码失败'));
+  }
+});
+
+module.exports = router;

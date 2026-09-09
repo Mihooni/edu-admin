@@ -1,0 +1,383 @@
+/**
+ * 工具函数库
+ * 提供 ID 生成、统一响应格式、openid 提取等通用功能
+ */
+
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+// === 密钥配置（生产环境必须通过环境变量设置，禁止使用默认密钥）===
+const DEFAULT_SECRET = 'change-this-jwt-secret-before-deploy';
+const JWT_SECRET = process.env.JWT_SECRET || DEFAULT_SECRET;
+if (JWT_SECRET === DEFAULT_SECRET) {
+  // 默认密钥硬编码在源码中，任何拿到代码的人都能伪造登录凭证。
+  // 生产环境直接拒绝启动；开发/测试环境也给出醒目警告，部署前必须设置 JWT_SECRET。
+  console.error('\n[安全警告] 正在使用默认 JWT_SECRET，存在登录凭证伪造风险！\n请在启动前设置强随机密钥：export JWT_SECRET=$(openssl rand -hex 32)\n');
+  if (process.env.NODE_ENV === 'production') process.exit(1);
+}
+const TOKEN_EXPIRY = '7d'; // 7 天（jsonwebtoken 标准格式）
+const BCRYPT_ROUNDS = 10;  // bcrypt 计算轮数（10 ≈ ~100ms，安全与性能的平衡点）
+
+/**
+ * 生成唯一 ID（前缀 + 时间戳36进制 + 加密安全随机数）
+ * @param {string} prefix - ID 前缀
+ * @returns {string} 大写的唯一 ID
+ */
+function generateId(prefix = '') {
+  const ts = Date.now().toString(36);
+  const rand = crypto.randomBytes(4).toString('hex');
+  return `${prefix}${ts}${rand}`.toUpperCase();
+}
+
+// === 密码哈希：bcrypt（替代旧版 SHA-256）===
+
+/**
+ * 密码哈希（bcrypt，带随机盐）
+ * @param {string} password - 明文密码
+ * @returns {string} bcrypt 哈希字符串（含盐与轮数）
+ */
+function hashPassword(password = '') {
+  return bcrypt.hashSync(password, BCRYPT_ROUNDS);
+}
+
+/**
+ * 验证密码（支持 bcrypt 新格式与 SHA-256 旧格式自动迁移）
+ * @param {string} password - 用户输入的明文密码
+ * @param {string} storedHash - 数据库中存储的哈希值
+ * @returns {{ valid: boolean, needsUpgrade: boolean }}
+ *   - valid: 密码是否匹配
+ *   - needsUpgrade: 旧版 SHA-256 哈希，需在登录成功后升级为 bcrypt
+ */
+function verifyPassword(password = '', storedHash = '') {
+  // bcrypt 哈希以 $2a$ / $2b$ 开头
+  if (storedHash.startsWith('$2a$') || storedHash.startsWith('$2b$') || storedHash.startsWith('$2y$')) {
+    return { valid: bcrypt.compareSync(password, storedHash), needsUpgrade: false };
+  }
+  // 旧版 SHA-256 + 固定盐（64 位 hex）
+  const legacyHash = crypto.createHash('sha256').update(`edu-admin:${password}`).digest('hex');
+  return { valid: legacyHash === storedHash, needsUpgrade: true };
+}
+
+/**
+ * 生成 JWT Token（使用 jsonwebtoken 标准库）
+ * @param {object} payload - 载荷数据
+ * @returns {string} token 字符串
+ */
+function generateToken(payload) {
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+}
+
+/**
+ * 验证 JWT Token（使用 jsonwebtoken 标准库）
+ * @param {string} token - token 字符串
+ * @returns {object|null} 解码后的 payload，验证失败返回 null
+ */
+function verifyToken(token) {
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 统一成功响应
+ * @param {*} data - 返回数据
+ * @returns {{code: number, data: *, message: string}}
+ */
+function success(data) {
+  return { code: 0, data, message: 'ok' };
+}
+
+/**
+ * 统一失败响应
+ * @param {string} message - 错误信息
+ * @param {number} code - 错误码（默认 1）
+ * @returns {{code: number, data: null, message: string}}
+ */
+function fail(message, code = 1) {
+  return { code, data: null, message };
+}
+
+/**
+ * 从请求中提取 openid（唯一可信来源：中间件从 JWT 解析后写入的 req.openid，
+ * 或请求头中后端签发的 JWT；绝不信任任何客户端可控的 x-openid / ?openid= / body.openid）
+ * @param {import('express').Request} req
+ * @returns {string}
+ */
+function getOpenId(req) {
+  // 1. 优先使用认证中间件已从 JWT 解析并写入的 req.openid
+  if (req && req.openid) return req.openid;
+  // 2. 兜底：直接从 Authorization Bearer 解析 JWT（防御性，不依赖中间件副作用）
+  const authHeader = req.headers['authorization'] || '';
+  if (authHeader.startsWith('Bearer ')) {
+    const token = authHeader.slice(7);
+    const payload = verifyToken(token);
+    if (payload && payload.openid) return payload.openid;
+  }
+  // 3. 任何客户端可控的 openid（x-openid header / query / body）一律不再信任
+  return '';
+}
+
+/**
+ * 判断当前请求是否为管理员（兼容 JWT 与 x-openid 开发模式）
+ * @param {object} req
+ * @returns {boolean}
+ */
+function isAdminReq(req) {
+  if (req.userRole === 'admin') return true;
+  const openid = getOpenId(req);
+  if (openid) {
+    try {
+      const db = require('../db');
+      const u = db.prepare('SELECT role FROM users WHERE openid = ?').get(openid);
+      return !!(u && u.role === 'admin');
+    } catch (e) {
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
+ * 判断当前请求是否为管理端工作人员（管理员或教练）
+ * Web 端仅管理员与教练可进入；教练拥有签到、请假审批、课表/成员查看等权限
+ * @param {object} req
+ * @returns {boolean}
+ */
+function isStaffReq(req) {
+  // 管理端工作人员：管理员 / 教练 / 销售（销售登录后可查看其授权范围内的看板与数据）
+  if (req.userRole === 'admin' || req.userRole === 'coach' || req.userRole === 'sales') return true;
+  const openid = getOpenId(req);
+  if (openid) {
+    try {
+      const db = require('../db');
+      const u = db.prepare('SELECT role FROM users WHERE openid = ?').get(openid);
+      return !!(u && (u.role === 'admin' || u.role === 'coach' || u.role === 'sales'));
+    } catch (e) {
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
+ * 判断当前请求是否为教练级工作人员（仅管理员或教练）
+ * 用于签到、请假审批、课表/补课安排、点评等仅限教练/管理员操作的场景。
+ * 销售（sales）不具备这些教练操作权限，避免越权代教练签到 / 批假 / 改课表。
+ * @param {object} req
+ * @returns {boolean}
+ */
+function isCoachReq(req) {
+  if (req.userRole === 'admin' || req.userRole === 'coach') return true;
+  const openid = getOpenId(req);
+  if (openid) {
+    try {
+      const db = require('../db');
+      const u = db.prepare('SELECT role FROM users WHERE openid = ?').get(openid);
+      return !!(u && (u.role === 'admin' || u.role === 'coach'));
+    } catch (e) {
+      return false;
+    }
+  }
+  return false;
+}
+
+// === 员工权限模型：管理者 / 销售 / 教练 可自定义权限范围 ===
+const DEFAULT_PERMS = {
+  admin: ['*'],
+  coach: ['students', 'schedule', 'checkin', 'leave'],
+  sales: ['dashboard', 'sales', 'students', 'growth'],
+};
+
+/** 解析用户最终权限（自定义权限优先，否则按角色默认） */
+function resolvePerms(user) {
+  if (!user) return [];
+  if (user.role === 'admin') return ['*'];
+  if (user.permissions && typeof user.permissions === 'string' && user.permissions.trim()) {
+    try {
+      const arr = JSON.parse(user.permissions);
+      if (Array.isArray(arr) && arr.length) return arr;
+    } catch (e) { /* 解析失败走默认 */ }
+  }
+  return DEFAULT_PERMS[user.role] || [];
+}
+
+/** 判断用户是否拥有某权限（'*' 表示全部权限） */
+function hasPerm(user, perm) {
+  const perms = resolvePerms(user);
+  return perms.includes('*') || perms.includes(perm);
+}
+
+/** 从请求获取当前用户记录 */
+function getReqUser(req) {
+  const openid = getOpenId(req);
+  if (!openid) return null;
+  try {
+    const db = require('../db');
+    return db.prepare('SELECT * FROM users WHERE openid = ?').get(openid);
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * 成员数据访问校验（防越权）
+ * 允许：管理员 / 教练（管理端工作场景）/ 绑定该成员的家长
+ * 用于带 studentId 参数的查询接口，家长仅能访问自己绑定的成员数据
+ * @param {object} req - 请求对象
+ * @param {string} studentId - 成员 ID
+ * @returns {boolean}
+ */
+function canViewStudentData(req, studentId) {
+  if (!studentId) return false;
+  const openid = getOpenId(req);
+  if (!openid) return false;
+  try {
+    const db = require('../db');
+    const u = db.prepare('SELECT role FROM users WHERE openid = ?').get(openid);
+    // 管理端工作人员（管理员/教练）可查看成员数据
+    if (u && (u.role === 'admin' || u.role === 'coach')) return true;
+    // 家长：仅限已绑定的成员
+    const bind = db.prepare(
+      'SELECT 1 FROM parent_bindings WHERE parent_openid = ? AND student_id = ?'
+    ).get(openid, studentId);
+    return !!bind;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * 转义 LIKE 查询中的通配符
+ * @param {string} str - 原始字符串
+ * @returns {string} 转义后的字符串
+ */
+function escapeLike(str) {
+  return str.replace(/[%_]/g, (m) => `\\${m}`);
+}
+
+/**
+ * 安全错误响应（不暴露内部细节）
+ * @param {string} message - 用户可见的错误消息
+ * @param {number} code - HTTP 状态码
+ * @returns {{code: number, data: null, message: string}}
+ */
+function safeFail(message, code = 1) {
+  return { code, data: null, message };
+}
+
+/**
+ * 获取当前时间戳（毫秒）
+ * @returns {number}
+ */
+function now() {
+  return Date.now();
+}
+
+/**
+ * 格式化日期为 YYYY-MM-DD
+ * @param {number} timestamp - 毫秒时间戳
+ * @returns {string}
+ */
+function formatDate(timestamp) {
+  const d = new Date(timestamp);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * 会员卡到期时间计算
+ * 次数卡有效天数为 0（不限有效期）时返回远期哨兵值（2100-01-01），
+ * 避免“激活即过期”导致次数卡在扣课查询中永远匹配不到。
+ * 时效卡有效天数为 0 时保持激活即到期（无有效期的时效卡无意义）。
+ */
+function calcCardExpiresAt(activatedAt, validDays, billingMode) {
+  if (validDays && validDays > 0) return activatedAt + validDays * 86400000;
+  if (billingMode === 'count') return 4102444800000; // 2100-01-01，按次数消耗
+  return activatedAt;
+}
+
+/**
+ * 获取本周某天的日期（0=周日，1=周一...6=周六）
+ * @param {number} weekDay - 星期几
+ * @returns {string} YYYY-MM-DD
+ */
+function getWeekDayDate(weekDay) {
+  const today = new Date();
+  const currentDay = today.getDay(); // 0=周日
+  const diff = weekDay - currentDay;
+  const target = new Date(today);
+  target.setDate(today.getDate() + diff);
+  return formatDate(target.getTime());
+}
+
+/**
+ * 分页参数解析
+ * @param {object} query - 请求 query
+ * @returns {{page: number, pageSize: number, offset: number}}
+ */
+function parsePagination(query) {
+  const page = Math.max(1, parseInt(query.page) || 1);
+  // 上限 500：周视图排期等场景需一次取回全部数据（列表页分页不受影响）
+  const pageSize = Math.min(500, Math.max(1, parseInt(query.pageSize) || 10));
+  const offset = (page - 1) * pageSize;
+  return { page, pageSize, offset };
+}
+
+/**
+ * 从请求解析操作者身份（openid + 角色），供审计留痕使用。
+ * 优先用认证中间件写入的 req.userRole；缺失时按 openid 回查用户表角色。
+ * 小程序家长端若无 openid 则记为 system。
+ * @param {import('express').Request} req
+ * @returns {{id: string, role: string}}
+ */
+function getActor(req) {
+  const openid = getOpenId(req);
+  let role = (req && req.userRole) || '';
+  if (!role && openid) {
+    try {
+      const database = require('../db');
+      const u = database.prepare('SELECT role FROM users WHERE openid = ?').get(openid);
+      role = u ? u.role : 'parent';
+    } catch (e) {
+      role = '';
+    }
+  }
+  if (!role) role = openid ? 'parent' : 'system';
+  return { id: openid, role };
+}
+
+// 审计写入工具（轻量、失败不影响主流程）
+const { recordAudit } = require('./audit');
+
+module.exports = {
+  generateId,
+  hashPassword,
+  verifyPassword,
+  generateToken,
+  verifyToken,
+  success,
+  fail,
+  safeFail,
+  getOpenId,
+  getActor,
+  recordAudit,
+  isAdminReq,
+  isStaffReq,
+  isCoachReq,
+  canViewStudentData,
+  DEFAULT_PERMS,
+  resolvePerms,
+  hasPerm,
+  getReqUser,
+  escapeLike,
+  now,
+  formatDate,
+  calcCardExpiresAt,
+  getWeekDayDate,
+  parsePagination,
+};

@@ -1,0 +1,71 @@
+# ─── 依赖与构建 ───
+node_modules/
+miniprogram_npm/
+web-admin/dist/
+web-admin/.vite/
+dist/
+build/
+vite.config.js.timestamp-*
+
+# 根 lock 为历史遗留（根 package.json 无依赖）；子包 lock 必须入库保证部署可复现
+/package-lock.json
+
+# ─── 运行产物（不入库）───
+*.log
+npm-debug.log*
+backend.pid
+webadmin.pid
+backend/backups/
+backend/db/data.db*
+backend/data.db
+backend/uploads/
+tools/uitest/
+.workbuddy/
+.claude/
+backups/
+backend/tests/_qa_checkin_tmp.cjs
+backend/tests/reports/
+miniprogram/design-research.md
+
+# ─── 环境与本地配置 ───
+.env
+.env.local
+.env.*.local
+project.private.config.json
+.cloudbase/
+cloudbaserc.json.local
+
+# ─── 内部工作档案（本地保留，不对外发布）───
+AUDIT*.md
+*audit*.md
+AUDIT-*.md
+AUDIT_*.md
+design/
+design-previews/
+tools/资讯推送/
+tools/com.edu-admin.*.plist
+tools/devtools-revive.swift
+test-comprehensive.mjs
+test-multi端-integration.mjs
+init-cloud.js
+seed-data.js
+deploy-functions.sh
+DESIGN-v3.md
+DESIGN-REVIEW-*.md
+DESIGN-OPTIMIZATION-TASKS.md
+OPTIMIZE-GUIDE.md
+QA-report-*.html
+typography-consistency-review-*.md
+体验版真机冒烟测试清单.md
+系统改进分析报告.md
+需求对照表.md
+验收清单.md
+docs/产品说明书.md
+
+# ─── IDE / OS ───
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

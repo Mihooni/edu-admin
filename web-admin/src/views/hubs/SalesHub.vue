@@ -1,0 +1,53 @@
+<template>
+  <div class="hub-page">
+    <PageHeader title="销售增长" />
+    <el-tabs v-model="activeTab" class="hub-tabs" @tab-change="syncUrl">
+      <el-tab-pane v-for="t in visibleTabs" :key="t.key" :name="t.key" :label="t.label">
+        <component v-if="activeTab === t.key" :is="t.comp" :embedded="true" />
+      </el-tab-pane>
+    </el-tabs>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, watch, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import PageHeader from '@/components/PageHeader.vue'
+import OrdersView from '@/views/orders/index.vue'
+import GrowthView from '@/views/growth/index.vue'
+import ProductsView from '@/views/products/index.vue'
+import FinanceView from '@/views/finance/index.vue'
+import { usePerm } from '@/composables/usePerm'
+
+const route = useRoute()
+const router = useRouter()
+const { role, has } = usePerm()
+
+const tabs = [
+  { key: 'orders', label: '销售管理', comp: OrdersView, roles: ['admin', 'sales'], perm: 'sales' },
+  { key: 'products', label: '产品服务', comp: ProductsView, roles: ['admin', 'sales'], perm: 'sales' },
+  { key: 'finance', label: '财务报表', comp: FinanceView, roles: ['admin'], perm: 'dashboard' },
+  { key: 'growth', label: '增长中心', comp: GrowthView, roles: ['admin', 'sales'], perm: 'growth' },
+]
+const visibleTabs = computed(() => tabs.filter((t) => t.roles.includes(role.value) || has(t.perm)))
+const activeTab = ref('orders')
+
+const syncUrl = () => router.replace({ query: { ...route.query, tab: activeTab.value } })
+onMounted(() => {
+  const tab = route.query.tab
+  if (tab && visibleTabs.value.some((t) => t.key === tab)) activeTab.value = tab
+  else if (visibleTabs.value.length && !visibleTabs.value.some((t) => t.key === activeTab.value)) {
+    activeTab.value = visibleTabs.value[0].key
+  }
+})
+watch(route, (r) => {
+  const tab = r.query.tab
+  if (tab && visibleTabs.value.some((t) => t.key === tab)) activeTab.value = tab
+})
+</script>
+
+<style scoped>
+.hub-tabs :deep(.el-tabs__header) {
+  margin-bottom: var(--t-spacing-lg);
+}
+</style>

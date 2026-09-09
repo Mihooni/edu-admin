@@ -1,0 +1,603 @@
+<template>
+  <div class="page-shell">
+    <PageHeader v-if="!embedded" :title="isAdmin ? $t('instructor') + '课时' : '我的课时统计'" />
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <span class="toolbar-count">{{ isAdmin ? '按月核算 · 灵活计费规则' : '仅供本人查看' }}</span>
+      </div>
+      <div class="toolbar-right">
+        <el-date-picker
+          v-model="month"
+          type="month"
+          placeholder="选择月份"
+          format="YYYY年MM月"
+          value-format="YYYY-MM"
+          :clearable="false"
+          style="width: 150px"
+          @change="load"
+        />
+        <template v-if="isAdmin">
+          <el-button :icon="Download" @click="openExport('detail')">导出课时明细</el-button>
+          <el-button type="primary" :icon="Download" @click="openExport('settlement')">导出薪资结算</el-button>
+        </template>
+      </div>
+    </div>
+
+    <!-- 管理员：本月薪资结算 -->
+    <template v-if="isAdmin">
+      <div class="section-title">本月薪资结算（{{ monthLabel }}）</div>
+      <div class="card table-container">
+        <ListErrorState v-if="!loading && error" :error="error" @retry="load" />
+        <el-table v-else
+          :data="settlement"
+          v-loading="loading"
+          empty-text="本月暂无排课记录"
+          @row-click="openDetailDrawer"
+          row-class-name="clickable-row" size="small">
+          <el-table-column v-if="showCol('coach')" :label="$t('instructor')" min-width="100">
+            <template #default="{ row }">
+              <span class="coach-name">{{ row.name }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="手机号" min-width="130">
+            <template #default="{ row }">{{ row.phone || '-' }}</template>
+          </el-table-column>
+          <el-table-column v-if="showCol('classes')" label="本月课次" min-width="100" align="right">
+            <template #default="{ row }">
+              <span class="num-strong">{{ row.classes }}</span> 节
+            </template>
+          </el-table-column>
+          <el-table-column v-if="showCol('students')" label="本月人次" min-width="100" align="right">
+            <template #default="{ row }">
+              <span class="num-strong">{{ row.students }}</span> 人次
+            </template>
+          </el-table-column>
+          <el-table-column v-if="showCol('amount')" label="本月应发" min-width="140" align="right">
+            <template #default="{ row }">
+              <span class="fee-amount">¥{{ row.amount.toLocaleString() }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="showCol('fee')" label="课时费/节" min-width="120" align="right">
+            <template #default="{ row }">
+              <span class="fee-amount">¥{{ Number(row.classFee || 0).toLocaleString() }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div v-if="settlement.length" class="settlement-total">
+          本月应发合计：
+          <span class="fee-amount total">¥{{ totalAmount.toLocaleString() }}</span>
+          <span class="settlement-note">按各{{ $t('instructor') }}薪资规则计算（按课时 / 按人头 / 混合），人数按实际签到计算</span>
+        </div>
+      </div>
+
+      <!-- 各周期概览 -->
+      <div class="section-title">各周期概览</div>
+      <div class="card table-container">
+        <el-table :data="rows" v-loading="loading" size="small">
+          <el-table-column :label="$t('instructor')" min-width="100">
+            <template #default="{ row }">
+              <span class="coach-name">{{ row.name }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="手机号" min-width="130">
+            <template #default="{ row }">{{ row.phone || '-' }}</template>
+          </el-table-column>
+          <el-table-column v-for="p in periods" :key="p.key" :label="p.label" min-width="130">
+            <template #default="{ row }">
+              <span class="period-inline"><b>{{ row[p.key].classes }}</b> 节 · <b>{{ row[p.key].students }}</b> 人次</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" min-width="90">
+            <template #default="{ row }">
+              <StatusDot :tone="row.status === 'active' ? 'success' : 'neutral'" :label="row.status === 'active' ? '在职' : '停用'" subtle />
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+
+      <!-- 薪资规则配置弹窗 -->
+      <el-dialog v-model="ruleDialogVisible" :title="`薪资规则 — ${ruleTarget?.name || ''}`" class="dlg-lg" destroy-on-close>
+        <PayRuleEditor v-model="ruleDraft" />
+        <template #footer>
+          <div class="dialog-footer">
+            <el-button @click="ruleDialogVisible = false">取消</el-button>
+            <el-button type="primary" :loading="savingRule" @click="saveRule">保存规则</el-button>
+          </div>
+        </template>
+      </el-dialog>
+
+      <!-- 教练详情抽屉 -->
+      <el-drawer v-model="detailVisible" :title="`${detailData?.teacher?.name || ''} · 课时明细（${monthLabel}）`" direction="rtl" size="720px">
+        <div v-if="detailData" class="drawer-head">
+          <div class="drawer-stats">
+            <div class="stat-item">
+              <span class="stat-num">{{ detailData.totals.classes }}</span>
+              <span class="stat-label">课次</span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+              <span class="stat-num">{{ detailData.totals.students }}</span>
+              <span class="stat-label">人次</span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+              <span class="stat-num fee-amount">¥{{ detailData.totals.amount.toLocaleString() }}</span>
+              <span class="stat-label">应发薪资</span>
+            </div>
+          </div>
+          <div class="drawer-rule-card" @click="openRuleDialog(detailTarget)">
+            <div class="rule-card-left">
+              <span class="rule-card-label">薪资规则</span>
+              <span class="rule-card-value">{{ detailData.summary }}</span>
+            </div>
+            <el-icon class="rule-card-arrow"><ArrowRight /></el-icon>
+          </div>
+        </div>
+        <el-table :data="detailData?.rows || []" max-height="520" empty-text="本月暂无排课" size="small">
+          <el-table-column label="日期" min-width="110">
+            <template #default="{ row }">{{ row.date }}</template>
+          </el-table-column>
+          <el-table-column label="活动" min-width="150" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.courseName }}</template>
+          </el-table-column>
+          <el-table-column label="时间" min-width="130">
+            <template #default="{ row }">{{ row.startTime }} - {{ row.endTime }}</template>
+          </el-table-column>
+          <el-table-column label="状态" min-width="80">
+            <template #default="{ row }">
+              <StatusDot :tone="row.status === 'scheduled' ? 'success' : 'warning'" :label="statusText[row.status] || row.status" subtle />
+            </template>
+          </el-table-column>
+          <el-table-column label="报名" min-width="72">
+            <template #default="{ row }">{{ row.enrolledCount }} 人</template>
+          </el-table-column>
+          <el-table-column label="签到" min-width="72">
+            <template #default="{ row }">
+              <span class="attended-num">{{ row.attended }}</span> 人
+            </template>
+          </el-table-column>
+          <el-table-column label="计算说明" min-width="180" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.calcText }}</template>
+          </el-table-column>
+          <el-table-column label="金额（元）" min-width="110" align="right">
+            <template #default="{ row }">
+              <span class="fee-amount">{{ row.lessonAmount.toLocaleString() }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
+        <template #footer>
+          <el-button :icon="Download" @click="openExport('one')">导出明细</el-button>
+          <el-button @click="detailVisible = false">关闭</el-button>
+        </template>
+      </el-drawer>
+
+      <!-- 字段设置 -->
+      <ColumnSettingsDialog
+        ref="colDialogRef"
+        :title="$t('instructor') + '课时字段设置'"
+        :columns="coachColumnDefs"
+        v-model:settings="colSettings"
+        :defaults="DEFAULT_COLUMN_SETTINGS"
+        @save="saveColSettings"
+        no-button
+      />
+    </template>
+
+    <!-- 教练本人 -->
+    <template v-else>
+      <div class="self-grid">
+        <div v-for="p in selfPeriods" :key="p.key" class="self-card">
+          <span class="self-label">{{ p.label }}</span>
+          <div class="self-nums">
+            <span class="self-num">{{ p.classes }}</span>
+            <span class="self-num-label">上课节数</span>
+          </div>
+          <div class="self-nums people">
+            <span class="self-num">{{ p.students }}</span>
+            <span class="self-num-label">上课人次</span>
+          </div>
+        </div>
+      </div>
+      <div v-if="selfPay" class="self-pay-card">
+        <div class="self-pay-head">
+          <span class="self-pay-title">本月薪资</span>
+          <span class="self-pay-rule">{{ selfPay.summary }}</span>
+        </div>
+        <div class="self-pay-nums">
+          <span class="self-pay-amount">¥{{ selfPay.totals.amount.toLocaleString() }}</span>
+          <span class="self-pay-detail">{{ selfPay.totals.classes }} 节 · {{ selfPay.totals.students }} 人次（按实际签到人数计算）</span>
+        </div>
+      </div>
+      <div class="self-tip">上课节数 = 已排课未取消的课时；上课人次 = 已签到（含迟到）的成员人次；薪资规则由管理员配置，可查看本人当月预估。</div>
+    </template>
+  </div>
+
+    <!-- 导出确认弹窗（课时明细 / 薪资结算 / 单人明细共用） -->
+    <ExportDialog
+      ref="exportDialogRef"
+      title="导出数据"
+      description="选择时间范围后确认导出；未选择时默认导出本月。"
+      default-shortcut="month"
+      @confirm="doExport"
+    />
+</template>
+
+<script setup>
+const props = defineProps({
+  embedded: { type: Boolean, default: false },
+})
+import { ref, computed, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
+import { Download, ArrowRight } from '@element-plus/icons-vue'
+import dayjs from 'dayjs'
+import { useUserStore } from '@/store/user'
+import { useSettingsStore } from '@/store/settings'
+import {
+  getCoachStats,
+  getAdminCoachStats,
+  getCoachClasses,
+  getAdminCoachClasses,
+  getPayrollCoaches,
+  getPayrollCoachDetail,
+  updatePayrollRule,
+  getMyPayroll,
+} from '@/api/modules'
+import { exportXlsx } from '@/utils/xlsx'
+import ExportDialog from '@/components/ExportDialog.vue'
+import StatusDot from '@/components/StatusDot.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import PayRuleEditor from '@/components/PayRuleEditor.vue'
+import ColumnSettingsDialog from '@/components/ColumnSettingsDialog.vue'
+
+const userStore = useUserStore()
+const settingsStore = useSettingsStore()
+const t = settingsStore.t
+const isAdmin = computed(() => userStore.userRole === 'admin')
+const loading = ref(false)
+const month = ref(dayjs().format('YYYY-MM'))
+const exportDialogRef = ref(null)
+const exportAction = ref('detail')
+const monthLabel = computed(() => month.value.replace('-', '年') + '月')
+const rows = ref([])
+const settlement = ref([])
+const selfPeriods = ref([])
+const selfPay = ref(null)
+const statusText = { scheduled: '正常', adjusted: '调整', cancelled: '取消' }
+
+const periods = [
+  { key: 'today', label: '今天' },
+  { key: 'week', label: '本周' },
+  { key: 'month', label: '本月' },
+  { key: 'year', label: '本年' },
+  { key: 'total', label: '累计' },
+]
+
+const monthRange = () => {
+  const [y, m] = month.value.split('-').map(Number)
+  const start = `${month.value}-01`
+  const end = `${month.value}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`
+  return { startDate: start, endDate: end }
+}
+
+const effectiveRange = (range) => (range && range.length === 2
+  ? { startDate: range[0], endDate: range[1] }
+  : monthRange())
+
+const totalAmount = computed(() => settlement.value.reduce((s, r) => s + (r.amount || 0), 0))
+
+const error = ref('')
+
+const load = async () => {
+  error.value = ''
+  loading.value = true
+  try {
+    if (isAdmin.value) {
+      const [stats, payroll] = await Promise.all([
+        getAdminCoachStats(month.value),
+        getPayrollCoaches({ month: month.value }),
+      ])
+      rows.value = stats.list || []
+      const feeMap = {}
+      for (const c of rows.value) feeMap[c.teacherId] = Number(c.classFee) || 0
+      settlement.value = (payroll.list || []).map((c) => ({
+        ...c,
+        phone: c.phone || '',
+        classFee: feeMap[c.teacherId] || c.payRule?.baseRate || 0,
+      }))
+    } else {
+      const [data, pay] = await Promise.all([
+        getCoachStats(month.value),
+        getMyPayroll({ month: month.value }),
+      ])
+      selfPeriods.value = periods.map((p) => ({
+        key: p.key, label: p.label,
+        classes: data[p.key]?.classes || 0,
+        students: data[p.key]?.students || 0,
+      }))
+      selfPay.value = pay || null
+    }
+  } catch (e) {
+    error.value = e?.message || '数据加载失败，请稍后重试'
+    rows.value = []
+    settlement.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+// ============ 薪资规则配置 ============
+const ruleDialogVisible = ref(false)
+const ruleTarget = ref(null)
+const ruleDraft = ref(null)
+const savingRule = ref(false)
+
+const openRuleDialog = (row) => {
+  ruleTarget.value = row
+  ruleDraft.value = row.payRule || null
+  ruleDialogVisible.value = true
+}
+
+const saveRule = async () => {
+  if (!ruleTarget.value) return
+  savingRule.value = true
+  try {
+    const res = await updatePayrollRule(ruleTarget.value.teacherId, ruleDraft.value)
+    ElMessage.success(`已保存「${ruleTarget.value.name}」薪资规则`)
+    ruleDialogVisible.value = false
+    // 刷新结算数据
+    await load()
+  } catch (e) {
+    ElMessage.error('保存失败')
+  } finally {
+    savingRule.value = false
+  }
+}
+
+// ============ 教练详情抽屉 ============
+const detailVisible = ref(false)
+const detailData = ref(null)
+const detailTarget = ref(null)
+
+const openDetailDrawer = async (row) => {
+  try {
+    const res = await getPayrollCoachDetail(row.teacherId, { month: month.value })
+    detailData.value = res
+    detailTarget.value = row
+    detailVisible.value = true
+  } catch (e) {
+    ElMessage.error('获取明细失败')
+  }
+}
+
+// ============ 字段设置（本地持久化） ============
+const coachColumnDefs = [
+  { key: 'coach', label: t('instructor') },
+  { key: 'classes', label: '本月课次' },
+  { key: 'students', label: '本月人次' },
+  { key: 'amount', label: '本月应发' },
+  { key: 'fee', label: '课时费/节' },
+]
+const DEFAULT_COLUMN_SETTINGS = {
+  coach: true, classes: true, students: true, amount: true, fee: true,
+}
+// localStorage 可能被旧版本写入损坏数据：解析失败时回退为空对象
+let savedCols = {}
+try { savedCols = JSON.parse(localStorage.getItem('edu_coach_cols') || '{}') } catch (e) { savedCols = {} }
+const colSettings = ref(savedCols)
+const showCol = (key) => colSettings.value[key] !== false
+const colDialogRef = ref(null)
+const saveColSettings = (settings) => {
+  colSettings.value = settings
+  localStorage.setItem('edu_coach_cols', JSON.stringify(settings))
+  ElMessage.success('字段设置已保存')
+}
+
+// ============ 导出 ============
+const buildRows = (list) => {
+  return (list || []).map((r) => [
+    r.date || '',
+    r.courseName || '',
+    r.startTime || '',
+    r.endTime || '',
+    statusText[r.status] || r.status || '',
+    r.enrolledCount || 0,
+    r.attended || 0,
+    r.calcText || '',
+    r.lessonAmount || 0,
+  ])
+}
+
+const openExport = (action) => {
+  exportAction.value = action
+  exportDialogRef.value?.open()
+}
+
+const doExport = async (range) => {
+  if (exportAction.value === 'settlement') return doExportSettlement(range)
+  if (exportAction.value === 'one') return doExportOne(range)
+  return doExportDetail(range)
+}
+
+const doExportDetail = async (range) => {
+  try {
+    const res = await getAdminCoachClasses(effectiveRange(range))
+    const list = res.list || []
+    if (!list.length) { ElMessage.warning('所选时间段暂无排课记录'); return }
+    const headers = ['日期', '活动', '开始时间', '结束时间', '状态', '报名人数', '签到人数', t('instructor')]
+    const rows = list.map((r) => [
+      r.date || '', r.course_name || '', r.start_time || '', r.end_time || '',
+      statusText[r.status] || r.status || '', r.enrolled_count || 0, r.attended || 0, r.teacher_name || '',
+    ])
+    const totalClasses = list.length
+    const totalAttended = list.reduce((s, r) => s + (r.attended || 0), 0)
+    rows.push(['', '', '', '', '', `合计 ${totalClasses} 节`, `签到 ${totalAttended} 人次`, ''])
+    exportXlsx(`课时明细_${month.value}`, headers, rows, { sheetName: '课时明细' })
+    ElMessage.success(`已导出 ${totalClasses} 节课时明细`)
+  } catch (e) { /* 拦截器已提示 */ }
+}
+
+const doExportSettlement = async (range) => {
+  try {
+    if (!settlement.value.length) { ElMessage.warning('本月暂无排课记录'); return }
+    const headers = [t('instructor'), '手机号', '本月课时', '本月人次', '课时费/节', '薪资规则', '本月应发（元）']
+    const rows = settlement.value.map((r) => [
+      r.name, r.phone || '', r.classes, r.students, r.classFee || 0, r.ruleSummary, r.amount || 0,
+    ])
+    rows.push(['', '', '', '', '', '合计', totalAmount.value])
+    exportXlsx(`薪资结算_${month.value}`, headers, rows, { sheetName: '薪资结算' })
+    ElMessage.success('已导出薪资结算表')
+  } catch (e) { /* 拦截器已提示 */ }
+}
+
+const doExportOne = async (range) => {
+  try {
+    const row = detailTarget.value
+    if (!row) return
+    const res = await getPayrollCoachDetail(row.teacherId, { month: month.value })
+    const list = res.rows || []
+    if (!list.length) { ElMessage.warning(`该${t('instructor')}本月暂无排课`); return }
+    const headers = ['日期', '活动', '开始时间', '结束时间', '状态', '报名人数', '签到人数', '计算说明', '金额（元）']
+    const rows = buildRows(list)
+    rows.push(['', '', '', '', '', '', '', '合计', res.totals.amount])
+    exportXlsx(`薪资明细_${row.name}_${month.value}`, headers, rows, { sheetName: '薪资明细' })
+    ElMessage.success(`已导出「${row.name}」薪资明细`)
+  } catch (e) { /* 拦截器已提示 */ }
+}
+
+onMounted(load)
+</script>
+
+<style lang="scss" scoped>
+.coach-name { display: block; font-weight: 600; color: var(--t-text-1); }
+
+.table-container {
+  margin-bottom: var(--t-spacing-lg);
+}
+
+.num-strong { font-weight: 700; color: var(--t-text-1); font-variant-numeric: tabular-nums; }
+.fee-amount { font-weight: 700; color: var(--t-accent-strong); font-variant-numeric: tabular-nums; }
+.fee-amount.total { font-size: var(--t-fs-lg); }
+.period-inline {
+  font-size: var(--t-fs-sm);
+  color: var(--t-text-2);
+  font-variant-numeric: tabular-nums;
+  b {
+    color: var(--t-text-1);
+    font-weight: 600;
+  }
+}
+.settlement-total {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: var(--t-spacing-md);
+  padding-top: var(--t-spacing-md);
+  border-top: 1px solid var(--t-line);
+  font-size: var(--t-fs-base);
+  font-weight: 600;
+  color: var(--t-text-1);
+}
+.settlement-note { font-size: var(--t-fs-xs); font-weight: 400; color: var(--t-text-3); }
+.attended-num { font-weight: 700; color: var(--t-text-1); }
+
+.drawer-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--t-spacing-md);
+  margin-bottom: var(--t-spacing-lg);
+}
+.drawer-stats {
+  display: flex;
+  align-items: center;
+  gap: var(--t-spacing-lg);
+  padding: var(--t-spacing-md) var(--t-spacing-lg);
+  background: var(--t-surface);
+  border: 1px solid var(--t-line);
+  border-radius: var(--t-radius-xl);
+}
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.stat-num {
+  font-size: var(--t-fs-2xl);
+  font-weight: 700;
+  color: var(--t-text-1);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.stat-item .fee-amount {
+  font-size: var(--t-fs-2xl);
+}
+.stat-label {
+  font-size: var(--t-fs-xs);
+  color: var(--t-text-3);
+}
+.stat-divider {
+  width: 1px;
+  height: 32px;
+  background: var(--t-line);
+}
+.drawer-rule-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--t-spacing-md) var(--t-spacing-lg);
+  background: var(--t-surface);
+  border: 1px solid var(--t-line);
+  border-radius: var(--t-radius-xl);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.drawer-rule-card:hover {
+  border-color: var(--t-accent-line);
+  background: var(--t-surface-hover);
+}
+.rule-card-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.rule-card-label {
+  font-size: var(--t-fs-sm);
+  font-weight: 600;
+  color: var(--t-text-1);
+  white-space: nowrap;
+}
+.rule-card-value {
+  font-size: var(--t-fs-sm);
+  color: var(--t-text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rule-card-arrow {
+  font-size: var(--t-fs-base);
+  color: var(--t-text-3);
+  flex-shrink: 0;
+}
+
+.self-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+.self-card { background: var(--t-surface); border: 1px solid var(--t-line); border-radius: var(--t-radius-xl); padding: 24px; }
+.self-label { font-size: var(--t-fs-sm); font-weight: 600; color: var(--t-accent-text); }
+.self-nums { display: flex; align-items: baseline; gap: 8px; margin-top: var(--t-spacing-md); }
+.self-num { font-size: var(--t-fs-3xl); font-weight: 700; color: var(--t-text-1); font-variant-numeric: tabular-nums; }
+.self-nums.people .self-num { color: var(--t-accent-strong); }
+.self-num-label { font-size: var(--t-fs-xs); color: var(--t-text-3); }
+.self-pay-card {
+  margin-top: var(--t-spacing-md);
+  background: linear-gradient(135deg, var(--t-accent-bg), var(--t-surface-hover));
+  border: 1px solid var(--t-accent-line);
+  border-radius: var(--t-radius-xl);
+  padding: 24px;
+}
+.self-pay-head { display: flex; align-items: baseline; gap: 12px; }
+.self-pay-title { font-size: var(--t-fs-base); font-weight: 700; color: var(--t-text-1); }
+.self-pay-rule { font-size: var(--t-fs-sm); color: var(--t-accent-text); }
+.self-pay-nums { display: flex; align-items: baseline; gap: var(--t-spacing-md); margin-top: var(--t-spacing-sm); flex-wrap: wrap; }
+.self-pay-amount { font-size: var(--t-fs-3xl); font-weight: 700; color: var(--t-accent-strong); font-variant-numeric: tabular-nums; }
+.self-pay-detail { font-size: var(--t-fs-xs); color: var(--t-text-2); }
+.self-tip { margin-top: var(--t-spacing-md); font-size: var(--t-fs-xs); color: var(--t-text-3); background: var(--t-surface); border: 1px solid var(--t-line); border-radius: var(--t-radius-xl); padding: var(--t-spacing-sm) var(--t-spacing-md); }
+</style>

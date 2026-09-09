@@ -1,0 +1,30 @@
+{
+  "name": "edu-admin-system",
+  "version": "1.0.0",
+  "description": "星课 StarClass — 教培/健身机构一体化管理系统：微信小程序 + Web 管理后台，Node.js + Express + SQLite 私有化部署",
+  "private": true,
+  "scripts": {
+    "start": "bash start.sh",
+    "start:backend": "cd backend && npm start",
+    "init:db": "cd backend && node db/init.js",
+    "seed": "cd backend && node db/seed.js",
+    "dev:web": "cd web-admin && npm run dev",
+    "build:web": "cd web-admin && npm run build",
+    "smoke": "node smoke-test.mjs",
+    "check-compile": "node check-compile.mjs",
+    "test:backend": "node backend/tests/full-system.test.js",
+    "verify": "node tools/verify-all.mjs",
+    "install:all": "cd backend && npm install && cd ../web-admin && npm install"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mihooni/edu-admin.git"
+  },
+  "author": "Mihooni",
+  "license": "MIT"
+}

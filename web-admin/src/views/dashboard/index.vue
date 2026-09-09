@@ -1,0 +1,1201 @@
+<template>
+  <div class="page-shell">
+    <!-- 顶部页头（使用统一 PageHeader 组件，主标题位置与全站一致） -->
+    <PageHeader title="数据看板">
+      <el-radio-group v-model="dashboardScope" size="default" @change="onScopeChange">
+        <el-radio-button value="all">全部</el-radio-button>
+        <el-radio-button value="me">我的</el-radio-button>
+      </el-radio-group>
+    </PageHeader>
+
+    <!-- 统计卡片 -->
+    <div v-if="widgets.statCards !== false" class="stat-cards">
+      <div
+        v-for="stat in stats"
+        :key="stat.key"
+        class="stat-card"
+      >
+        <div class="stat-header">
+          <span class="stat-label">{{ stat.label }}</span>
+        </div>
+        <div class="stat-value">
+          <span class="stat-number">{{ stat.value }}</span>
+          <span class="stat-unit">{{ stat.unit }}</span>
+        </div>
+        <div class="stat-trend" :class="stat.trend > 0 ? 'up' : 'down'">
+          <template v-if="stat.note">
+            <span>{{ stat.note }}</span>
+          </template>
+          <template v-else>
+            <el-icon>
+              <CaretTop v-if="stat.trend > 0" />
+              <CaretBottom v-else />
+            </el-icon>
+            <span>{{ Math.abs(stat.trend) }}% 较上周</span>
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <!-- 中部图表 -->
+    <div class="charts-row">
+      <!-- 到场趋势 -->
+      <div v-if="widgets.attendance !== false" class="chart-card">
+        <div class="chart-header">
+          <h3>到场趋势</h3>
+          <el-radio-group v-model="attendancePeriod" size="small" @change="onAttendancePeriodChange">
+            <el-radio-button value="week">本周</el-radio-button>
+            <el-radio-button value="month">本月</el-radio-button>
+          </el-radio-group>
+        </div>
+        <div ref="attendanceChartRef" class="chart-body"></div>
+      </div>
+
+      <!-- 营收趋势（本月 vs 上月，借鉴 trycompai/crm 的 AreaTrend） -->
+      <div v-if="widgets.statCards !== false" class="chart-card">
+        <div class="chart-header">
+          <h3>营收趋势</h3>
+          <span class="chart-legend">
+            <i class="legend-dot current"></i>本月
+            <i class="legend-dot prev"></i>上月
+          </span>
+        </div>
+        <div ref="revenueChartRef" class="chart-body"></div>
+      </div>
+
+      <!-- 产品占比（借鉴 trycompai/crm 的 DonutStat） -->
+      <div v-if="widgets.products !== false" class="chart-card">
+        <div class="chart-header">
+          <h3>产品占比</h3>
+          <span class="chart-sub">本月共 {{ productOrderCount }} 单</span>
+        </div>
+        <div ref="productDonutRef" class="chart-body"></div>
+      </div>
+    </div>
+
+    <!-- 下部列表 -->
+    <div class="lists-row">
+      <!-- 近期签到动态 -->
+      <div v-if="widgets.activity !== false" class="list-card">
+        <div class="list-header">
+          <h3>近期{{ $t('checkin') }}动态</h3>
+          <el-link type="primary" underline="never" @click="router.push('/checkin')">查看全部</el-link>
+        </div>
+        <div class="activity-list">
+          <div
+            v-for="item in recentActivities"
+            :key="item.id"
+            class="activity-item"
+          >
+            <el-avatar :size="40" :src="item.avatar" :icon="UserFilled" />
+            <div class="activity-info">
+              <p class="activity-text">
+                <strong>{{ item.student }}</strong>
+                {{ item.action }}
+                <span class="activity-course">{{ item.course }}</span>
+              </p>
+              <span class="activity-time">{{ item.time }}</span>
+            </div>
+            <StatusDot :tone="item.status === 'success' ? 'success' : item.status === 'warning' ? 'warning' : 'neutral'" :label="item.statusText" subtle />
+          </div>
+        </div>
+      </div>
+
+      <!-- 待处理事项 -->
+    <div v-if="widgets.pending !== false" class="list-card">
+        <div class="list-header">
+          <h3>待处理事项</h3>
+          <el-badge :value="pendingItems.length" class="pending-badge" />
+        </div>
+        <div class="pending-list">
+          <div
+            v-for="item in pendingItems"
+            :key="item.id"
+            class="pending-item"
+          >
+            <div class="pending-icon" :class="item.type">
+              <el-icon :size="18">
+                <component :is="item.icon" />
+              </el-icon>
+            </div>
+            <div class="pending-info">
+              <p class="pending-title">{{ item.title }}</p>
+              <span class="pending-desc">{{ item.desc }}</span>
+            </div>
+            <el-button
+              v-if="item.kind === 'followup'"
+              text
+              type="success"
+              size="small"
+              @click="completeFu(item)"
+            >完成</el-button>
+            <el-button v-else text type="primary" size="small" @click="goStudents">处理</el-button>
+          </div>
+        </div>
+    </div>
+
+    <!-- 本周签单排名 -->
+      <div v-if="widgets.rankWeek !== false" class="list-card">
+        <div class="list-header">
+          <h3>本周签单排名</h3>
+        </div>
+        <div v-if="salesData.weekRanking.length" class="sales-ranking">
+          <div v-for="(item, index) in salesData.weekRanking.slice(0, 5)" :key="item.salesperson" class="rank-item">
+            <span class="rank-no" :class="index < 3 ? 'top' : ''">{{ index + 1 }}</span>
+            <span class="rank-name">{{ item.salesperson }}</span>
+            <div class="rank-meter"><div class="rank-meter-fill" :style="{ width: meterWidth(item.amount, weekMax) }"></div></div>
+            <span class="rank-count">{{ item.count }}单</span>
+            <span class="rank-amount">¥{{ Number(item.amount).toLocaleString() }}</span>
+          </div>
+        </div>
+        <div v-else class="empty-hint">本周暂无签单记录</div>
+      </div>
+
+      <!-- 本月签单排名 -->
+      <div v-if="widgets.rankMonth !== false" class="list-card">
+        <div class="list-header">
+          <h3>本月签单排名</h3>
+          <span class="list-sub">1v1 销售 ¥{{ oneToOneText }} · {{ oneToOneCount }} 单</span>
+        </div>
+        <div v-if="salesData.monthRanking.length" class="sales-ranking">
+          <div v-for="(item, index) in salesData.monthRanking.slice(0, 5)" :key="item.salesperson" class="rank-item">
+            <span class="rank-no" :class="index < 3 ? 'top' : ''">{{ index + 1 }}</span>
+            <span class="rank-name">{{ item.salesperson }}</span>
+            <div class="rank-meter"><div class="rank-meter-fill" :style="{ width: meterWidth(item.amount, monthMax) }"></div></div>
+            <span class="rank-count">{{ item.count }}单</span>
+            <span class="rank-amount">¥{{ Number(item.amount).toLocaleString() }}</span>
+          </div>
+        </div>
+        <div v-else class="empty-hint">本月暂无签单记录</div>
+      </div>
+
+      <!-- 本年签单排名 -->
+      <div v-if="widgets.rankYear !== false" class="list-card">
+        <div class="list-header">
+          <h3>本年签单排名</h3>
+        </div>
+        <div v-if="salesData.yearRanking.length" class="sales-ranking">
+          <div v-for="(item, index) in salesData.yearRanking.slice(0, 5)" :key="item.salesperson" class="rank-item">
+            <span class="rank-no" :class="index < 3 ? 'top' : ''">{{ index + 1 }}</span>
+            <span class="rank-name">{{ item.salesperson }}</span>
+            <div class="rank-meter"><div class="rank-meter-fill" :style="{ width: meterWidth(item.amount, yearMax) }"></div></div>
+            <span class="rank-count">{{ item.count }}单</span>
+            <span class="rank-amount">¥{{ Number(item.amount).toLocaleString() }}</span>
+          </div>
+        </div>
+        <div v-else class="empty-hint">本年暂无签单记录</div>
+      </div>
+
+      <!-- 销售产品统计（与小程序管理端一致） -->
+      <div v-if="widgets.salesProducts !== false" class="list-card">
+        <div class="list-header">
+          <h3>销售产品统计</h3>
+          <span class="list-sub">共 {{ productOrderCount }} 单</span>
+        </div>
+        <div v-if="salesData.itemStats.length" class="sales-ranking">
+          <div
+            v-for="(item, index) in salesData.itemStats.slice(0, 6)"
+            :key="item.itemName"
+            class="rank-item"
+          >
+            <span class="rank-no" :class="index < 3 ? 'top' : ''">{{ index + 1 }}</span>
+            <span class="rank-name">{{ item.itemName }}</span>
+            <span class="rank-count">{{ item.count }}单</span>
+            <span class="rank-amount">¥{{ Number(item.amount).toLocaleString() }}</span>
+          </div>
+        </div>
+        <div v-else class="empty-hint">本月暂无购买记录</div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import * as echarts from 'echarts/core'
+import { LineChart, BarChart, PieChart } from 'echarts/charts'
+import {
+  GridComponent,
+  TooltipComponent,
+  LegendComponent,
+  TitleComponent,
+} from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+echarts.use([LineChart, BarChart, PieChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent, CanvasRenderer])
+import dayjs from 'dayjs'
+import { ElMessage } from 'element-plus'
+import { useRouter } from 'vue-router'
+import { UserFilled } from '@element-plus/icons-vue'
+import { getDashboard, getCharts, getCheckinRecords, getExpiringCards, getFollowUpsToday, completeFollowUp } from '@/api/modules'
+import { relativeTime } from '@/utils/format'
+import StatusDot from '@/components/StatusDot.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import { CHART_PALETTE, CLASS_FALLBACK } from '@/utils/theme-colors'
+import { useSettingsStore } from '@/store/settings'
+import { useUserStore } from '@/store/user'
+
+const settingsStore = useSettingsStore()
+const t = settingsStore.t
+const userStore = useUserStore()
+
+const router = useRouter()
+// 范围切换状态记忆（CRM OverviewScopeToggle 一致体验）
+const dashboardScope = ref(localStorage.getItem('edu_dash_scope') || 'all')
+
+const onScopeChange = () => {
+  localStorage.setItem('edu_dash_scope', dashboardScope.value)
+  loadDashboard()
+}
+
+// 到场趋势“本周/本月”切换：重拉图表数据（后端按 period 返回 7 天或 30 天）
+const onAttendancePeriodChange = () => {
+  loadCharts()
+}
+
+// 今日日期文本
+const todayText = computed(() => {
+  const weekDays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+  return `${dayjs().format('YYYY年MM月DD日')} ${weekDays[dayjs().day()]}`
+})
+
+// ============================================
+// 统计数据（来自 /api/admin/dashboard）
+// ============================================
+const formatMoney = (v) => Number(v || 0).toLocaleString('zh-CN')
+
+const stats = ref([])
+const salesData = ref({ monthRanking: [], weekRanking: [], yearRanking: [], itemStats: [], oneToOne: { amount: 0, count: 0 } })
+// localStorage 可能被旧版本写入损坏数据：解析失败时回退为空对象
+let savedWidgets = {}
+try { savedWidgets = JSON.parse(localStorage.getItem('edu_dash_widgets') || '{}') } catch (e) { savedWidgets = {} }
+const widgets = ref(savedWidgets)
+
+const oneToOneText = computed(() => Number(salesData.value.oneToOne?.amount || 0).toLocaleString())
+const oneToOneCount = computed(() => salesData.value.oneToOne?.count || 0)
+const productOrderCount = computed(() =>
+  (salesData.value.itemStats || []).reduce((s, i) => s + (i.count || 0), 0)
+)
+
+// 排名进度条宽度（借鉴 trycompai/crm 的 ValueMeter）
+const weekMax = computed(() => Math.max(1, ...(salesData.value.weekRanking || []).map((i) => Number(i.amount) || 0)))
+const monthMax = computed(() => Math.max(1, ...(salesData.value.monthRanking || []).map((i) => Number(i.amount) || 0)))
+const yearMax = computed(() => Math.max(1, ...(salesData.value.yearRanking || []).map((i) => Number(i.amount) || 0)))
+const meterWidth = (amount, max) => `${Math.max(4, Math.round((Number(amount) || 0) / max * 100))}%`
+
+const expireText = (ts) => {
+  if (!ts) return '即将到期'
+  const days = Math.ceil((Number(ts) - Date.now()) / 86400000)
+  if (days <= 0) return '今天到期'
+  if (days === 1) return '明天到期'
+  return `${days} 天后到期`
+}
+
+const buildStats = (data) => {
+  const { overview, today, revenue, alerts } = data
+  const deltaNote = (label, v) => (v != null ? `${label} ${v > 0 ? '+' : ''}${v}%` : '')
+  const fmt = (v) => formatMoney(v)
+  stats.value = [
+    {
+      key: 'revenueToday',
+      label: '今日收入',
+      value: fmt(revenue.today),
+      unit: '元',
+      note: deltaNote('较昨日', revenue.todayDelta) || '暂无昨日对比',
+      trend: revenue.todayDelta ?? 0,
+      icon: 'Money'
+    },
+    {
+      key: 'revenueWeek',
+      label: '本周收入',
+      value: fmt(revenue.week),
+      unit: '元',
+      note: deltaNote('较上周', revenue.weekDelta) || '本周暂无对比',
+      trend: revenue.weekDelta ?? 0,
+      icon: 'TrendCharts'
+    },
+    {
+      key: 'revenueMonth',
+      label: '本月收入',
+      value: fmt(revenue.month),
+      unit: '元',
+      note: deltaNote('较上月', revenue.monthDelta) || '本月暂无对比',
+      trend: revenue.monthDelta ?? 0,
+      icon: 'DataLine'
+    },
+    {
+      key: 'revenueYear',
+      label: '本年收入',
+      value: fmt(revenue.year),
+      unit: '元',
+      note: deltaNote('较去年', revenue.yearDelta) || '今年暂无对比',
+      trend: revenue.yearDelta ?? 0,
+      icon: 'Coin'
+    },
+    {
+      key: 'students',
+      label: '有效' + t('learner') + '数',
+      value: String(overview.validMembers ?? overview.totalStudents ?? 0),
+      unit: '人',
+      note: '持有有效' + t('membership'),
+      trend: 0,
+      icon: 'User'
+    },
+    {
+      key: 'attendance',
+      label: '今日到场率',
+      value: String(today.attendanceRate || 0).replace(/%$/, ''),
+      unit: '%',
+      note: `${today.checkins || 0} 人已${t('checkin')}`,
+      trend: 0,
+      icon: 'Checked'
+    },
+    {
+      key: 'todayClasses',
+      label: '今日课表',
+      value: String(today.schedules || 0),
+      unit: '节',
+      note: `${overview.totalCourses || 0} 个在售活动`,
+      trend: 0,
+      icon: 'Calendar'
+    },
+    {
+      key: 'renewal',
+      label: '续期预警',
+      value: String(alerts.expiringCards || 0),
+      unit: '人',
+      note: '7 天内到期',
+      trend: 0,
+      icon: 'Warning'
+    }
+  ]
+}
+
+// ============================================
+// 图表
+// ============================================
+const attendancePeriod = ref('week')
+const attendanceChartRef = ref(null)
+let attendanceChart = null
+const revenueChartRef = ref(null)
+let revenueChart = null
+const productDonutRef = ref(null)
+let productDonut = null
+
+const chartData = ref({
+  attendanceTrend: { labels: [], data: [] },
+  revenueTrend: { labels: [], current: [], prev: [] },
+  courseDist: [],
+  productSales: []
+})
+
+const loadCharts = async () => {
+  try {
+    chartData.value = await getCharts({ period: attendancePeriod.value })
+  } catch (e) {
+    chartData.value = { attendanceTrend: { labels: [], data: [] }, revenueTrend: { labels: [], current: [], prev: [] }, courseDist: [], productSales: [] }
+  }
+  initAttendanceChart()
+  initRevenueChart()
+  initProductDonut()
+}
+
+// ECharts canvas 无法解析 CSS 变量，手动读取主题色
+const cssVar = (name, fallback = '') => {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return v || fallback || undefined
+}
+
+// 将主题色（hex/rgb）转为带透明度的 rgba，供 ECharts areaStyle 等使用
+const hexToRgba = (hex, alpha) => {
+  const raw = (hex || '').trim()
+  const rgbMatch = raw.match(/^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/)
+  if (rgbMatch) return `rgba(${rgbMatch[1]},${rgbMatch[2]},${rgbMatch[3]},${alpha})`
+  const h = raw.replace('#', '')
+  if (h.length !== 6 && h.length !== 3) return `rgba(0,113,227,${alpha})` // 回退 Apple Blue
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
+  const r = parseInt(full.slice(0, 2), 16)
+  const g = parseInt(full.slice(2, 4), 16)
+  const b = parseInt(full.slice(4, 6), 16)
+  return `rgba(${r},${g},${b},${alpha})`
+}
+
+const onThemeChanged = () => {
+  if (attendanceChart) { attendanceChart.dispose(); attendanceChart = null }
+  if (revenueChart) { revenueChart.dispose(); revenueChart = null }
+  if (productDonut) { productDonut.dispose(); productDonut = null }
+  loadCharts()
+}
+
+// 到场趋势图
+const initAttendanceChart = () => {
+  if (!attendanceChartRef.value) return
+
+  attendanceChart = echarts.init(attendanceChartRef.value)
+  const trend = chartData.value.attendanceTrend
+  const hasTrend = !!(trend.data && trend.data.length)
+  const emptyTitle = hasTrend ? {} : {
+    text: '暂无到场数据',
+    left: 'center',
+    top: 'center',
+    textStyle: { color: cssVar('--t-text-faint'), fontSize: 13, fontWeight: 400 }
+  }
+  const option = {
+    ...emptyTitle,
+    grid: {
+      top: 20,
+      right: 20,
+      bottom: 30,
+      left: 50
+    },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: cssVar('--t-bg-overlay'),
+      borderColor: cssVar('--t-line-strong'),
+      borderWidth: 1,
+      textStyle: { color: cssVar('--t-text-1') },
+      formatter: (params) => {
+        const p = params[0]
+        return `${p.name}<br/><span style="color:${cssVar('--t-accent')};font-weight:600">${p.value}%</span>`
+      }
+    },
+    xAxis: {
+      type: 'category',
+      data: hasTrend ? trend.labels : [],
+      axisLine: { lineStyle: { color: cssVar('--t-line-strong') } },
+      axisTick: { show: false },
+      axisLabel: { color: cssVar('--t-text-2'), fontSize: 12 }
+    },
+    yAxis: {
+      type: 'value',
+      max: 100,
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { lineStyle: { color: cssVar('--t-line') } },
+      axisLabel: {
+        color: cssVar('--t-text-2'),
+        fontSize: 12,
+        formatter: '{value}%'
+      }
+    },
+    series: [
+      {
+        name: '到场率',
+        type: 'line',
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 8,
+        data: hasTrend ? trend.data : [],
+        lineStyle: { color: cssVar('--t-accent', '#0071e3'), width: 3 },
+        itemStyle: { color: cssVar('--t-accent', '#0071e3'), borderWidth: 2, borderColor: cssVar('--t-bg') },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: hexToRgba(cssVar('--t-accent', '#0071e3'), 0.22) },
+            { offset: 1, color: hexToRgba(cssVar('--t-accent', '#0071e3'), 0) }
+          ])
+        }
+      }
+    ]
+  }
+  attendanceChart.setOption(option)
+}
+
+// 营收趋势（本月 vs 上月，借鉴 trycompai/crm 的 AreaTrend）
+const initRevenueChart = () => {
+  if (!revenueChartRef.value) return
+  revenueChart = echarts.init(revenueChartRef.value)
+  const accent = cssVar('--t-accent', '#0071e3')
+  const prev = CHART_PALETTE[1]
+  const rev = chartData.value.revenueTrend
+  const hasRev = !!((rev.current && rev.current.length) || (rev.prev && rev.prev.length))
+  const emptyTitle = hasRev ? {} : {
+    text: '暂无营收数据',
+    left: 'center',
+    top: 'center',
+    textStyle: { color: cssVar('--t-text-faint'), fontSize: 13, fontWeight: 400 }
+  }
+  const option = {
+    ...emptyTitle,
+    grid: { top: 20, right: 16, bottom: 30, left: 44 },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: cssVar('--t-bg-overlay'),
+      borderColor: cssVar('--t-line-strong'),
+      borderWidth: 1,
+      textStyle: { color: cssVar('--t-text-1') },
+      valueFormatter: (v) => '¥' + Number(v || 0).toLocaleString()
+    },
+    legend: { show: false },
+    xAxis: {
+      type: 'category',
+      data: rev.labels.length ? rev.labels : [],
+      axisLine: { lineStyle: { color: cssVar('--t-line-strong') } },
+      axisTick: { show: false },
+      axisLabel: { color: cssVar('--t-text-2'), fontSize: 11, interval: 4 }
+    },
+    yAxis: {
+      type: 'value',
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { lineStyle: { color: cssVar('--t-line') } },
+      axisLabel: { color: cssVar('--t-text-2'), fontSize: 11, formatter: (v) => (v >= 1000 ? (v / 1000) + 'k' : v) }
+    },
+    series: [
+      {
+        name: '上月',
+        type: 'line',
+        smooth: true,
+        symbol: 'none',
+        data: rev.prev,
+        lineStyle: { color: prev, width: 2, type: 'dashed' },
+        itemStyle: { color: prev },
+        areaStyle: { color: hexToRgba(prev, 0.08) }
+      },
+      {
+        name: '本月',
+        type: 'line',
+        smooth: true,
+        symbol: 'none',
+        data: rev.current,
+        lineStyle: { color: accent, width: 3 },
+        itemStyle: { color: accent },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: hexToRgba(accent, 0.22) },
+            { offset: 1, color: hexToRgba(accent, 0) }
+          ])
+        }
+      }
+    ]
+  }
+  revenueChart.setOption(option)
+}
+
+// 产品占比环形图（借鉴 trycompai/crm 的 DonutStat）
+const initProductDonut = () => {
+  if (!productDonutRef.value) return
+  productDonut = echarts.init(productDonutRef.value)
+  const list = salesData.value.itemStats || []
+  const palette = [...CHART_PALETTE]
+  const option = {
+    ...(list.length ? {} : {
+      title: {
+        text: '暂无产品销售',
+        left: 'center',
+        top: 'center',
+        textStyle: { color: cssVar('--t-text-faint'), fontSize: 13, fontWeight: 400 }
+      }
+    }),
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: cssVar('--t-bg-overlay'),
+      borderColor: cssVar('--t-line-strong'),
+      borderWidth: 1,
+      textStyle: { color: cssVar('--t-text-1') },
+      formatter: '{b}<br/>¥{c}（{d}%）'
+    },
+    series: [
+      {
+        type: 'pie',
+        radius: ['58%', '82%'],
+        center: ['50%', '50%'],
+        avoidLabelOverlap: true,
+        itemStyle: { borderColor: cssVar('--t-surface'), borderWidth: 3, borderRadius: 6 },
+        label: { show: false },
+        emphasis: {
+          label: { show: true, fontSize: 13, fontWeight: 600, color: cssVar('--t-text-1') },
+          scaleSize: 6
+        },
+        data: list.slice(0, 6).map((item, i) => ({
+          name: item.itemName || '未命名产品',
+          value: Number(item.amount || item.count || 0),
+          itemStyle: { color: palette[i % palette.length] }
+        }))
+      }
+    ]
+  }
+  productDonut.setOption(option)
+}
+
+// ============================================
+// 近期签到动态（来自 /api/checkin/records）
+// ============================================
+const statusMap = {
+  present: { status: 'success', text: '已' + t('checkin') },
+  late: { status: 'warning', text: '迟到' },
+  leave: { status: 'info', text: '请假' },
+  absent: { status: 'danger', text: '缺席' }
+}
+
+const recentActivities = ref([])
+
+const loadRecentActivities = async () => {
+  try {
+    const res = await getCheckinRecords({ page: 1, pageSize: 6 })
+    recentActivities.value = (res.list || []).map((r) => {
+      const st = statusMap[r.status] || { status: 'info', text: r.status }
+      const timeText = r.checkin_time
+        ? relativeTime(r.checkin_time)
+        : r.date || ''
+      return {
+        id: r.id,
+        student: r.student_name || '未知成员',
+        action: r.status === 'leave' ? '请假：' : '完成了',
+        course: r.course_name || '训练活动',
+        time: timeText,
+        avatar: '',
+        status: st.status,
+        statusText: st.text
+      }
+    })
+  } catch (e) {
+    recentActivities.value = []
+  }
+}
+
+// ============================================
+// 待处理事项（来自 /api/membership/expiring）
+// ============================================
+const pendingItems = ref([])
+
+const loadPendingItems = async () => {
+  const items = []
+  // 续期提醒仅管理员/教练可见；销售无权访问该接口，跳过以免弹出权限错误提示
+  const role = userStore.userRole
+  if (role === 'admin' || role === 'coach') {
+    try {
+      const res = await getExpiringCards({ days: 7 })
+      items.push(...(res.list || []).map((c) => ({
+        id: 'renewal-' + c.id,
+        kind: 'expiring',
+        type: 'renewal',
+        icon: 'Refresh',
+        title: '续期提醒',
+        desc: `${c.student_name || c.student_name_real || '成员'} 的${t('membership')}${expireText(c.expires_at)}`
+      })))
+    } catch (e) {
+      /* 忽略 */
+    }
+  }
+  // 跟进任务（借鉴 trycompai/crm 的 AgentTask 队列）
+  try {
+    const fu = await getFollowUpsToday()
+    items.push(...(fu?.list || []).map((t) => ({
+      id: 'fu-' + t.id,
+      kind: 'followup',
+      taskId: t.id,
+      type: t.task_type,
+      icon: 'Bell',
+      title: t.taskTypeText || '跟进任务',
+      desc: `${t.target_name || ''}：${t.reason || ''}`
+    })))
+  } catch (e) {
+    /* 忽略 */
+  }
+  pendingItems.value = items.slice(0, 8)
+}
+
+const completeFu = async (item) => {
+  if (!item.taskId) return
+  try {
+    await completeFollowUp(item.taskId, { note: '看板一键完成' })
+    ElMessage.success('跟进任务已完成')
+    loadPendingItems()
+  } catch (e) {
+    ElMessage.error(e.message || '操作失败')
+  }
+}
+
+const goStudents = () => {
+  router.push('/students')
+}
+
+// ============================================
+// 看板数据
+// ============================================
+const loadDashboard = async () => {
+  try {
+    const data = await getDashboard({ scope: dashboardScope.value })
+    buildStats(data)
+    salesData.value = data.sales || { monthRanking: [], weekRanking: [], yearRanking: [], itemStats: [], oneToOne: { amount: 0, count: 0 } }
+  } catch (e) {
+    stats.value = []
+  }
+}
+
+// ============================================
+// 生命周期
+// ============================================
+let resizeHandler = null
+
+onMounted(() => {
+  loadDashboard()
+  loadRecentActivities()
+  loadPendingItems()
+  loadCharts()
+
+  resizeHandler = () => {
+    ;[attendanceChart, revenueChart, productDonut].forEach((c) => c?.resize())
+  }
+  window.addEventListener('resize', resizeHandler)
+  window.addEventListener('theme-changed', onThemeChanged)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', resizeHandler)
+  window.removeEventListener('theme-changed', onThemeChanged)
+  ;[attendanceChart, revenueChart, productDonut].forEach((c) => c?.dispose())
+})
+</script>
+
+<style lang="scss" scoped>
+// 统计卡片
+.stat-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--t-spacing-lg);
+  margin-bottom: var(--t-spacing-lg);
+}
+
+.stat-card {
+  background: var(--t-surface);
+  border: 1px solid var(--t-line);
+  border-radius: var(--t-radius-card);
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.stat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.stat-label {
+  font-size: var(--t-fs-sm);
+  color: var(--t-text-2);
+  font-weight: 400;
+}
+
+.stat-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--t-radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stat-value {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.stat-number {
+  font-size: var(--t-fs-3xl);
+  font-weight: 700;
+  color: var(--t-text-1);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stat-unit {
+  font-size: var(--t-fs-sm);
+  color: var(--t-text-2);
+  font-weight: 400;
+}
+
+.stat-trend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--t-fs-xs);
+  font-weight: 500;
+  margin-bottom: 8px;
+
+  &.up {
+    color: var(--t-success-text);
+  }
+
+  &.down {
+    color: var(--t-danger-text);
+  }
+}
+
+// 图表行
+.charts-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: var(--t-spacing-lg);
+  margin-bottom: var(--t-spacing-lg);
+}
+
+.chart-card {
+  background: var(--t-surface);
+  border: 1px solid var(--t-line);
+  border-radius: var(--t-radius-card);
+  padding: var(--t-spacing-lg);
+}
+
+.chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+
+  h3 {
+    font-size: var(--t-fs-xl);
+    font-weight: 600;
+    color: var(--t-text-1);
+    margin: 0;
+  }
+}
+
+.chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--t-fs-xs);
+  color: var(--t-text-2);
+}
+
+.legend-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 3px;
+
+  &.current { background: var(--t-accent); }
+  &.prev { background: var(--t-text-3); }
+}
+
+.chart-sub {
+  font-size: var(--t-fs-xs);
+  color: var(--t-text-3);
+}
+
+.chart-body {
+  height: 240px;
+}
+
+// 列表行
+.lists-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: var(--t-spacing-md);
+}
+
+.list-card {
+  background: var(--t-surface);
+  border: 1px solid var(--t-line);
+  border-radius: var(--t-radius-card);
+  padding: var(--t-spacing-lg);
+}
+
+.list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+
+  h3 {
+    font-size: var(--t-fs-xl);
+    font-weight: 600;
+    color: var(--t-text-1);
+    margin: 0;
+  }
+}
+
+// 签到动态
+.activity-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.activity-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+
+  &:not(:last-child) {
+    border-bottom: 1px solid var(--t-line);
+  }
+}
+
+.activity-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.activity-text {
+  font-size: var(--t-fs-sm);
+  color: var(--t-text-1);
+  margin: 0 0 2px;
+
+  strong {
+    font-weight: 600;
+  }
+
+  .activity-course {
+    color: var(--t-accent-text);
+  }
+}
+
+.activity-time {
+  font-size: var(--t-fs-xs);
+  color: var(--t-text-2);
+}
+
+// 待处理事项
+.pending-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pending-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--t-radius-md);
+  background: transparent;
+  transition: background 0.2s;
+
+  &:hover {
+    background: var(--t-surface-strong);
+  }
+}
+
+.pending-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--t-radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+
+  &.refund {
+    background: color-mix(in srgb, var(--t-danger) 14%, transparent);
+    color: var(--t-danger-text);
+  }
+
+  &.leave {
+    background: color-mix(in srgb, var(--t-warning) 14%, transparent);
+    color: var(--t-warning-text);
+  }
+
+  &.renewal {
+    background: var(--t-accent-bg);
+    color: var(--t-accent-text);
+  }
+}
+
+.pending-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.pending-title {
+  font-size: var(--t-fs-base);
+  font-weight: 600;
+  color: var(--t-text-1);
+  margin: 0 0 2px;
+}
+
+.pending-desc {
+  font-size: var(--t-fs-xs);
+  color: var(--t-text-2);
+}
+
+// 响应式
+@media (max-width: 1200px) {
+  .stat-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .charts-row {
+    grid-template-columns: 1fr;
+  }
+
+  .lists-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .stat-cards {
+    grid-template-columns: 1fr;
+  }
+
+}
+
+// 签单排名
+.list-sub {
+  font-size: var(--t-fs-xs);
+  color: var(--t-accent-text);
+}
+
+// 入场动画（克制的 CRM 式微动效）
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.stat-card,
+.chart-card,
+.list-card {
+  animation: card-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.stat-card:nth-child(2) { animation-delay: 0.04s; }
+.stat-card:nth-child(3) { animation-delay: 0.08s; }
+.stat-card:nth-child(4) { animation-delay: 0.12s; }
+.stat-card:nth-child(5) { animation-delay: 0.16s; }
+.stat-card:nth-child(6) { animation-delay: 0.2s; }
+.stat-card:nth-child(7) { animation-delay: 0.24s; }
+.stat-card:nth-child(8) { animation-delay: 0.28s; }
+
+.chart-card:nth-child(2) { animation-delay: 0.06s; }
+.chart-card:nth-child(3) { animation-delay: 0.12s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .stat-card,
+  .chart-card,
+  .list-card {
+    animation: none;
+  }
+}
+
+.sales-ranking {
+  display: flex;
+  flex-direction: column;
+}
+
+.rank-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+
+  &:not(:last-child) {
+    border-bottom: 1px solid var(--t-line);
+  }
+}
+
+.rank-meter {
+  flex: 1;
+  min-width: 40px;
+  height: 6px;
+  border-radius: var(--t-radius-sm);
+  background: var(--t-surface-hover);
+  overflow: hidden;
+}
+
+.rank-meter-fill {
+  height: 100%;
+  border-radius: var(--t-radius-sm);
+  background: var(--t-accent);
+  transition: width var(--t-dur-base) var(--t-ease-standard);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rank-meter-fill {
+    transition: none;
+  }
+}
+
+.rank-no {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--t-radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--t-fs-xs);
+  font-weight: 600;
+  background: var(--t-surface-hover);
+  color: var(--t-text-2);
+  flex-shrink: 0;
+
+  &.top {
+    background: var(--t-accent-bg);
+    color: var(--t-accent-strong);
+  }
+}
+
+.rank-name {
+  flex: 1;
+  font-size: var(--t-fs-sm);
+  font-weight: 500;
+  color: var(--t-text-1);
+}
+
+.rank-count {
+  font-size: var(--t-fs-xs);
+  color: var(--t-text-3);
+}
+
+.rank-amount {
+  font-size: var(--t-fs-sm);
+  font-weight: 600;
+  color: var(--t-text-1);
+  min-width: 72px;
+  text-align: right;
+}
+
+.empty-hint {
+  padding: 24px 0;
+  text-align: center;
+  color: var(--t-text-2);
+  font-size: var(--t-fs-sm);
+}
+
+.widget-tip {
+  font-size: var(--t-fs-xs);
+  color: var(--t-text-3);
+  margin: 0 0 14px;
+}
+
+.widget-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.widget-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--t-radius-md);
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.widget-option:hover {
+  background: var(--t-surface-hover);
+}
+
+.widget-option-label {
+  font-size: var(--t-fs-base);
+  font-weight: 500;
+  color: var(--t-text-1);
+}
+</style>

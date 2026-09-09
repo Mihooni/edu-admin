@@ -1,0 +1,49 @@
+<template>
+  <div class="hub-page">
+    <PageHeader :title="`${$t('learner')}档案`" />
+    <el-tabs v-model="activeTab" class="hub-tabs" @tab-change="syncUrl">
+      <el-tab-pane v-for="t in visibleTabs" :key="t.key" :name="t.key" :label="t.labelKey ? $t(t.labelKey) : t.label">
+        <component v-if="activeTab === t.key" :is="t.comp" :embedded="true" />
+      </el-tab-pane>
+    </el-tabs>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, watch, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import PageHeader from '@/components/PageHeader.vue'
+import StudentsView from '@/views/students/index.vue'
+import PointsView from '@/views/points/index.vue'
+import { usePerm } from '@/composables/usePerm'
+
+const route = useRoute()
+const router = useRouter()
+const { role, has } = usePerm()
+
+const tabs = [
+  { key: 'students', labelKey: 'learner', comp: StudentsView, roles: ['admin', 'coach', 'sales'], perm: 'students' },
+  { key: 'points', label: '积分', comp: PointsView, roles: ['admin'], perm: 'points' },
+]
+const visibleTabs = computed(() => tabs.filter((t) => t.roles.includes(role.value) || has(t.perm)))
+const activeTab = ref('students')
+
+const syncUrl = () => router.replace({ query: { ...route.query, tab: activeTab.value } })
+onMounted(() => {
+  const tab = route.query.tab
+  if (tab && visibleTabs.value.some((t) => t.key === tab)) activeTab.value = tab
+  else if (visibleTabs.value.length && !visibleTabs.value.some((t) => t.key === activeTab.value)) {
+    activeTab.value = visibleTabs.value[0].key
+  }
+})
+watch(route, (r) => {
+  const tab = r.query.tab
+  if (tab && visibleTabs.value.some((t) => t.key === tab)) activeTab.value = tab
+})
+</script>
+
+<style scoped>
+.hub-tabs :deep(.el-tabs__header) {
+  margin-bottom: var(--t-spacing-lg);
+}
+</style>
