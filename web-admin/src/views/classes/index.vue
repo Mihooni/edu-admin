@@ -31,7 +31,7 @@
         class="class-card"
         @click="openDetail(cls)"
       >
-        <div class="class-card-banner" :style="{ background: cls.color || CLASS_FALLBACK }">
+        <div class="class-card-banner" :style="{ background: cls.color || classFallback() }">
           <span class="class-card-category">{{ cls.category || '常规训练' }}</span>
         </div>
 
@@ -125,7 +125,7 @@
     <!-- 项目详情抽屉 -->
     <el-drawer v-model="detailVisible" :title="selectedClass?.name || '项目详情'" direction="rtl" size="var(--t-drawer-md)">
       <div v-if="selectedClass" class="class-detail">
-        <div class="detail-banner" :style="{ background: selectedClass.color || CLASS_FALLBACK }">
+        <div class="detail-banner" :style="{ background: selectedClass.color || classFallback() }">
           <span class="detail-category">{{ selectedClass.category || '常规训练' }}</span>
           <StatusDot
             :tone="selectedClass.archived ? 'neutral' : (selectedClass.is_active !== 0 ? 'success' : 'warning')"
@@ -190,7 +190,7 @@ import { exportXlsx } from '@/utils/xlsx'
 import StatusDot from '@/components/StatusDot.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import ExportDialog from '@/components/ExportDialog.vue'
-import { CLASS_FALLBACK } from '@/utils/theme-colors'
+import { classFallback } from '@/utils/theme-colors'
 
 const searchKeyword = ref('')
 const courses = ref([])
@@ -256,7 +256,7 @@ const form = reactive({
   consumeClasses: 1,
   maxStudents: 20,
   pricePerClass: 0,
-  color: CLASS_FALLBACK,
+  color: classFallback(),
   description: ''
 })
 
@@ -274,7 +274,7 @@ const openAddDialog = (row) => {
     consumeClasses: row?.consume_classes || 1,
     maxStudents: row?.max_students || 20,
     pricePerClass: row?.price_per_class || 0,
-    color: row?.color || CLASS_FALLBACK,
+    color: row?.color || classFallback(),
     description: row?.description || ''
   })
   dialogVisible.value = true
@@ -420,12 +420,14 @@ onMounted(loadCourses)
   position: relative;
   gap: 8px;
 
-  // 顶部压暗遮罩：确保浅色分类背景上的白字始终可读
+  // 顶部压暗遮罩：确保分类背景上的白字始终可读
+  // 遮罩强度取决于 banner 的课程标识色（饱和中亮底），与页面明暗主题无关，
+  // 故用固定黑色半透明而非 --t-scrim，两色主题下白字对比度一致达标。
   &::after {
     content: '';
     position: absolute;
     inset: 0;
-    background: linear-gradient(180deg, var(--t-scrim), rgba(0, 0, 0, 0.1) 65%, rgba(0, 0, 0, 0));
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.15) 65%, rgba(0, 0, 0, 0));
     pointer-events: none;
   }
 
@@ -435,7 +437,7 @@ onMounted(loadCourses)
     color: #fff;
     font-size: var(--t-fs-sm);
     font-weight: 600;
-    background: var(--t-scrim);
+    background: rgba(0, 0, 0, 0.78);
     padding: 4px 12px;
     border-radius: 999px;
     backdrop-filter: blur(4px);
@@ -443,17 +445,7 @@ onMounted(loadCourses)
 
 }
 
-// 浅色主题：横幅按钮遮罩加深，保证白字可读（深色主题 scrim 本身已足够）
-html[data-theme='light'] {
-  .class-card-banner::after {
-    background: linear-gradient(180deg, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.15) 65%, rgba(0, 0, 0, 0));
-  }
-
-  .class-card-banner .class-card-category {
-    background: rgba(0, 0, 0, 0.78);
-  }
-
-}
+// 横幅上的白色文字/遮罩在深浅两色主题下均可读（banner 为课程标识色实底），无需按主题分支
 
 .class-card-body {
   padding: 18px 20px 16px;

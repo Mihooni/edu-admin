@@ -230,7 +230,7 @@ import { getDashboard, getCharts, getCheckinRecords, getExpiringCards, getFollow
 import { relativeTime } from '@/utils/format'
 import StatusDot from '@/components/StatusDot.vue'
 import PageHeader from '@/components/PageHeader.vue'
-import { CHART_PALETTE, CLASS_FALLBACK } from '@/utils/theme-colors'
+import { chartPalette } from '@/utils/theme-colors'
 import { useSettingsStore } from '@/store/settings'
 import { useUserStore } from '@/store/user'
 
@@ -504,7 +504,7 @@ const initRevenueChart = () => {
   if (!revenueChartRef.value) return
   revenueChart = echarts.init(revenueChartRef.value)
   const accent = cssVar('--t-accent', '#0071e3')
-  const prev = CHART_PALETTE[1]
+  const prev = chartPalette()[1]
   const rev = chartData.value.revenueTrend
   const hasRev = !!((rev.current && rev.current.length) || (rev.prev && rev.prev.length))
   const emptyTitle = hasRev ? {} : {
@@ -575,7 +575,7 @@ const initProductDonut = () => {
   if (!productDonutRef.value) return
   productDonut = echarts.init(productDonutRef.value)
   const list = salesData.value.itemStats || []
-  const palette = [...CHART_PALETTE]
+  const palette = chartPalette()
   const option = {
     ...(list.length ? {} : {
       title: {

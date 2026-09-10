@@ -172,7 +172,7 @@
         <el-table-column prop="date" label="日期" min-width="100"  />
         <el-table-column label="活动名称" min-width="140"  show-overflow-tooltip>
           <template #default="{ row }">
-            <span class="course-dot" :style="{ background: row.color || CLASS_FALLBACK }"></span>
+            <span class="course-dot" :style="{ background: row.color || classFallback() }"></span>
             {{ row.course_name }}
           </template>
         </el-table-column>
@@ -361,7 +361,7 @@
 const props = defineProps({
   embedded: { type: Boolean, default: false },
 })
-import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, ArrowLeft, ArrowRight, Download, User, Clock, UserFilled } from '@element-plus/icons-vue'
@@ -382,7 +382,16 @@ import EntityAvatar from '@/components/EntityAvatar.vue'
 import StatusDot from '@/components/StatusDot.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { usePerm } from '@/composables/usePerm'
-import { CLASS_FALLBACK, TEACHER_COLORS } from '@/utils/theme-colors'
+import { classFallback, teacherColors, courseTextColor } from '@/utils/theme-colors'
+import { themeTick } from '@/utils/theme'
+
+// 主题切换时重取行配色（加载时固化进数据，需随主题刷新）
+watch(themeTick, () => {
+  schedules.value = schedules.value.map((s) => ({
+    ...s,
+    color: teacherColor(s.teacher_id, courseColor(s.course_id)),
+  }))
+})
 
 // 删除排期仅管理员可用（后端 DELETE /schedules/:id 仅管理员可调用）
 const isAdmin = computed(() => usePerm().role.value === 'admin')
@@ -497,30 +506,20 @@ const timeSlots = computed(() => {
 const HOUR_H = computed(() => Math.round(Math.min(104, Math.max(88, 1232 / (rangeEnd.value - rangeStart.value)))))
 const DAY_START_HOUR = computed(() => rangeStart.value)
 
-// 按教练稳定映射配色；无教练时回退课程色
+// 按教练稳定映射配色；无教练时回退课程色（主题感知：暗色下用提亮色板）
 const teacherColor = (teacherId, fallback) => {
-  if (!teacherId) return fallback || CLASS_FALLBACK
+  const palette = teacherColors()
+  if (!teacherId) return fallback || classFallback()
   let h = 0
   for (const ch of String(teacherId)) h = (h * 31 + ch.charCodeAt(0)) % 997
-  return TEACHER_COLORS[h % TEACHER_COLORS.length]
+  return palette[h % palette.length]
 }
 
 const courseColor = (courseId) => {
-  return courses.value.find((c) => c.id === courseId)?.color || CLASS_FALLBACK
+  return courses.value.find((c) => c.id === courseId)?.color || classFallback()
 }
 
-// 主题感知的课程文字色：仅亮色主题，统一按亮色压暗，保证浅色课程色可读
-// 注：历史版本持久化 edu_theme='dark' 时此处会返回未压暗的最亮色，
-// 该键已由 main.js 清除，无需再响应主题变化
-const courseTextColor = (hex) => {
-  if (!hex) return CLASS_FALLBACK
-  const m = hex.replace('#', '')
-  const full = m.length === 3 ? m.split('').map((c) => c + c).join('') : m
-  const r = parseInt(full.slice(0, 2), 16)
-  const g = parseInt(full.slice(2, 4), 16)
-  const b = parseInt(full.slice(4, 6), 16)
-  return `rgb(${Math.round(r * 0.45)}, ${Math.round(g * 0.45)}, ${Math.round(b * 0.45)})`
-}
+// 课程文字色为共享工具（主题感知：亮色压暗 / 暗色提亮），render 期间调用自动随主题切换更新
 
 const error = ref('')
 
@@ -595,7 +594,7 @@ const courseStyle = (course, siblings) => {
   const end = toMinutes(course.end_time)
   const top = (start - DAY_START_HOUR.value * 60) * (HOUR_H.value / 60) + 1
   const height = Math.max(24, (end - start) * (HOUR_H.value / 60) - 2)
-  const color = course.color || CLASS_FALLBACK
+  const color = course.color || classFallback()
   const base = {
     top: `${top}px`,
     height: `${height}px`,

@@ -9,6 +9,9 @@
 
 ### 新增
 
+- 管理后台深色模式：跟随系统 / 浅色 / 深色三档切换（顶栏按钮），
+  偏好持久化到 localStorage，首屏无闪白；ECharts 与课程标识色随主题重绘
+- `tools/dark-mode-audit.mjs`：像素级深浅色双模式审计（--theme dark|light）
 - Docker 一键部署：单镜像（API + 管理后台）、compose 编排、
   Caddy 自动 HTTPS 边车、`deploy/deploy.sh` 与 GitHub Actions Deploy 工作流
 - CI（GitHub Actions）：后端 256 项回归 × Node 18/20/22、小程序静态校验、

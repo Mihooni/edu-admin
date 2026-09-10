@@ -64,11 +64,12 @@
 }
 
 // ============================================
-// Apple 极简亮色主题（默认 + 唯一）
+// Apple 极简亮色主题（默认）
 // ============================================
 html[data-theme='light'],
 html:not([data-theme]) {
   --t-bg: #{$bg};
+  --t-bg-alt: #{$bg-alt};
   --t-bg-elev: #{$surface};
   --t-bg-overlay: #{$surface};
   --t-surface: #{$surface};
@@ -116,6 +117,58 @@ html:not([data-theme]) {
 }
 
 // ============================================
+// Apple 极简暗色主题（跟随系统 / 手动切换）
+// 值取自 Apple HIG 暗色系统色板；控件原生外观由 color-scheme 驱动
+// ============================================
+html[data-theme='dark'] {
+  --t-bg: #0B0B0F;
+  --t-bg-alt: #15151A;
+  --t-bg-elev: #17171C;
+  --t-surface: #17171C;
+  --t-surface-hover: #1F1F26;
+  --t-surface-strong: #26262E;
+  --t-line: #2A2A33;
+  --t-line-strong: #3A3A44;
+  --t-text-1: #F5F5F7;
+  --t-text-2: #B9B9BF;
+  --t-text-3: #8E8E94;
+  --t-text-faint: #6E6E76;
+  --t-accent: #0A84FF;
+  --t-accent-strong: #409CFF;
+  --t-accent-soft: #64ACFF;
+  --t-accent-text: #409CFF;
+  --t-accent-bg: rgba(10, 132, 255, 0.16);
+  --t-accent-line: rgba(10, 132, 255, 0.36);
+  --t-success: #30D158;
+  --t-warning: #FF9F0A;
+  --t-danger: #FF453A;
+  --t-info: #98989F;
+  --t-success-text: #30D158;
+  --t-danger-text: #FF6961;
+  --t-warning-text: #FFB340;
+  --t-scrim: rgba(0, 0, 0, 0.55);
+  --t-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --t-card-shadow-hover: 0 2px 8px rgba(0, 0, 0, 0.5);
+  --t-input-bg: #17171C;
+  --t-hover-bg: rgba(255, 255, 255, 0.06);
+
+  // 阴影层次（暗色下用更深的投影拉开层次）
+  --t-elevation-1: 0 1px 3px rgba(0, 0, 0, 0.45);
+  --t-elevation-2: 0 2px 8px rgba(0, 0, 0, 0.55);
+  --t-elevation-float: 0 8px 24px rgba(0, 0, 0, 0.65);
+  --t-elevation-accent: 0 2px 8px rgba(10, 132, 255, 0.32);
+
+  // 业务色（Apple 暗色系统色）
+  --t-class-fallback: #0A84FF;
+  --t-chart-1: #0A84FF;
+  --t-chart-2: #30D158;
+  --t-chart-3: #FF9F0A;
+  --t-chart-4: #FF453A;
+  --t-chart-5: #BF5AF2;
+  --t-chart-6: #FF375F;
+}
+
+// ============================================
 // Element Plus CSS 变量覆盖（Apple Blue）
 // ============================================
 html[data-theme='light'],
@@ -156,6 +209,50 @@ html:not([data-theme]) {
   --el-box-shadow-light: none;
   --el-disabled-bg-color: #{$surface-hover};
   --el-disabled-text-color: #{$text-faint};
+}
+
+// ============================================
+// Element Plus CSS 变量覆盖 —— 暗色（对齐 --t-* token）
+// html.dark 由 theme.js 挂到根元素，同时激活 EP dark/css-vars.css
+// ============================================
+html[data-theme='dark'] {
+  --el-color-primary: #0A84FF !important;
+  // 暗色下 EP 约定：light-N 向黑色混合（越浅越深），dark-2 提亮
+  --el-color-primary-light-3: color-mix(in srgb, #0A84FF 70%, black);
+  --el-color-primary-light-5: color-mix(in srgb, #0A84FF 50%, black);
+  --el-color-primary-light-7: color-mix(in srgb, #0A84FF 30%, black);
+  --el-color-primary-light-8: color-mix(in srgb, #0A84FF 20%, black);
+  --el-color-primary-light-9: color-mix(in srgb, #0A84FF 14%, #17171C);
+  --el-color-primary-dark-2: color-mix(in srgb, #0A84FF 80%, white);
+
+  --el-color-success: #30D158;
+  --el-color-warning: #FF9F0A;
+  --el-color-danger: #FF453A;
+  --el-color-info: #98989F;
+
+  --el-bg-color: #0B0B0F !important;
+  --el-bg-color-overlay: #17171C !important;
+  --el-fill-color-blank: #17171C !important;
+  --el-fill-color-light: rgba(255, 255, 255, 0.06) !important;
+  --el-fill-color-lighter: rgba(255, 255, 255, 0.04) !important;
+  --el-border-color: #2A2A33 !important;
+  --el-border-color-light: #26262E !important;
+  --el-border-color-lighter: #1F1F26 !important;
+  --el-text-color-primary: #F5F5F7 !important;
+  --el-text-color-regular: #B9B9BF !important;
+  --el-text-color-secondary: #8E8E94 !important;
+  --el-text-color-placeholder: #6E6E76 !important;
+  --el-mask-color: rgba(0, 0, 0, 0.6) !important;
+
+  --el-border-radius-base: #{$radius-md};
+  --el-border-radius-small: #{$radius-sm};
+  --el-border-radius-round: #{$radius-full};
+
+  --el-font-family: #{$font-family};
+  --el-box-shadow: none;
+  --el-box-shadow-light: none;
+  --el-disabled-bg-color: #1F1F26;
+  --el-disabled-text-color: #6E6E76;
 }
 
 // ============================================
@@ -213,12 +310,12 @@ html, body {
   font-size: $fs-sm !important;
 
   --el-table-border-color: transparent;
-  --el-table-header-bg-color: #{$bg-alt};
+  --el-table-header-bg-color: var(--t-bg-alt);
   --el-table-row-hover-bg-color: var(--t-hover-bg);
   --el-table-bg-color: transparent;
   --el-table-tr-bg-color: transparent;
-  --el-table-header-text-color: #{$text-2};
-  --el-table-text-color: #{$text-1};
+  --el-table-header-text-color: var(--t-text-2);
+  --el-table-text-color: var(--t-text-1);
 
   th.el-table__cell {
     text-align: left;
@@ -227,7 +324,7 @@ html, body {
     font-size: $fs-xs;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    background: #{$bg-alt} !important;
+    background: var(--t-bg-alt) !important;
     border-bottom: 1px solid var(--t-line) !important;
   }
 
@@ -351,7 +448,7 @@ html, body {
     box-shadow: none;
 
     &:hover {
-      background: rgba(0, 113, 227, 0.12);
+      background: color-mix(in srgb, var(--t-accent) 12%, transparent);
       border-color: var(--t-accent-line);
       color: var(--t-accent-strong);
       opacity: 1;
@@ -390,7 +487,7 @@ html, body {
 
   &:hover {
     color: var(--t-accent-strong);
-    background: rgba(0, 113, 227, 0.12);
+    background: color-mix(in srgb, var(--t-accent) 12%, transparent);
   }
 }
 
@@ -527,10 +624,10 @@ html, body {
   padding: 4px 10px !important;
   font-weight: 500;
 
-  &.el-tag--success { background: rgba(52, 199, 89, 0.12); color: var(--t-success-text); border-color: rgba(52, 199, 89, 0.24); }
-  &.el-tag--warning { background: rgba(255, 149, 0, 0.12); color: var(--t-warning-text); border-color: rgba(255, 149, 0, 0.24); }
-  &.el-tag--danger { background: rgba(255, 59, 48, 0.12); color: var(--t-danger-text); border-color: rgba(255, 59, 48, 0.24); }
-  &.el-tag--info { background: rgba(110, 110, 115, 0.12); color: var(--t-text-2); border-color: rgba(110, 110, 115, 0.2); }
+  &.el-tag--success { background: color-mix(in srgb, var(--t-success) 12%, transparent); color: var(--t-success-text); border-color: color-mix(in srgb, var(--t-success) 24%, transparent); }
+  &.el-tag--warning { background: color-mix(in srgb, var(--t-warning) 12%, transparent); color: var(--t-warning-text); border-color: color-mix(in srgb, var(--t-warning) 24%, transparent); }
+  &.el-tag--danger { background: color-mix(in srgb, var(--t-danger) 12%, transparent); color: var(--t-danger-text); border-color: color-mix(in srgb, var(--t-danger) 24%, transparent); }
+  &.el-tag--info { background: color-mix(in srgb, var(--t-info) 12%, transparent); color: var(--t-text-2); border-color: color-mix(in srgb, var(--t-info) 20%, transparent); }
 }
 
 // ============================================

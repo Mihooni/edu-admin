@@ -19,6 +19,13 @@
             <kbd class="quick-kbd">⌘K</kbd>
           </el-button>
 
+          <!-- 主题切换 -->
+          <el-tooltip :content="themeTip" placement="bottom">
+            <el-button text class="header-icon theme-toggle-btn" :aria-label="themeTip" @click="cycleThemeMode">
+              <el-icon :size="18"><component :is="themeIcon" /></el-icon>
+            </el-button>
+          </el-tooltip>
+
           <!-- 通知 -->
           <el-badge :value="unreadCount" :hidden="unreadCount === 0" class="header-icon">
             <el-button text>
@@ -216,6 +223,7 @@ import { useUserStore } from '@/store/user'
 import { useSettingsStore } from '@/store/settings'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import EntityAvatar from '@/components/EntityAvatar.vue'
+import { themeMode, cycleThemeMode, THEME_LABELS } from '@/utils/theme'
 import {
   School,
   Fold,
@@ -226,6 +234,9 @@ import {
   Setting,
   SwitchButton,
   Search,
+  Sunny,
+  Moon,
+  Monitor,
   DataAnalysis,
   Calendar,
   Checked,
@@ -270,9 +281,14 @@ const t = settingsStore.t
 // 将菜单标题中的 {concept} 占位符解析为当前称呼方案下的词（如 {learner} → 学员/会员）
 const resolveTitle = (title) => (title ? String(title).replace(/\{(\w+)\}/g, (_, k) => t(k) || k) : title)
 
-// 注：仅实现亮色主题（index.scss「默认 + 唯一」）；曾有一个会写入
-// data-theme='dark' 的切换按钮，但不存在对应 CSS，点击会导致全部
-// --t-* 变量失效，已移除该按钮。见 DESIGN 深色主题需求时再实现。
+// 主题切换：system → light → dark 循环，偏好持久化于 edu_theme（见 utils/theme.js）。
+// 历史版本曾写入无 CSS 支撑的 data-theme='dark' 导致页面失效，现已由完整暗色 token 块实现。
+const themeIcon = computed(() => {
+  if (themeMode.value === 'system') return Monitor
+  if (themeMode.value === 'light') return Sunny
+  return Moon
+})
+const themeTip = computed(() => `主题：${THEME_LABELS[themeMode.value]}（点击切换）`)
 
 // ============================================
 // 通知面板

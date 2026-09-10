@@ -356,6 +356,11 @@ function onResize() {
   if (trendChart) trendChart.resize()
 }
 
+// 主题切换：setOption(option, true) 全量替换，颜色按新 token 重取
+function onThemeChanged() {
+  if (trendChart) renderTrend()
+}
+
 async function loadOptions() {
   try {
     const stu = await getStudents({ pageSize: 500 })
@@ -375,9 +380,12 @@ onMounted(() => {
   loadOptions()
   loadData()
   window.addEventListener('resize', onResize)
+  // 主题切换后按新 token 重绘（ECharts canvas 不读 CSS 变量）
+  window.addEventListener('theme-changed', onThemeChanged)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
+  window.removeEventListener('theme-changed', onThemeChanged)
   if (trendChart) { trendChart.dispose(); trendChart = null }
 })
 </script>
