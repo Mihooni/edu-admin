@@ -6,6 +6,8 @@
 const fs = require('fs');
 
 const DB_PATH = process.env.DB_PATH || '/tmp/queue_test.db';
+// 必须导出给 db/index.js 读取，否则会静默回退到真实 data.db 并污染业务数据
+process.env.DB_PATH = DB_PATH;
 for (const p of [DB_PATH, DB_PATH + '-wal', DB_PATH + '-shm']) {
   try { fs.rmSync(p); } catch (e) { /* not exist */ }
 }

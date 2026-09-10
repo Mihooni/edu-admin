@@ -20,10 +20,6 @@ backend/uploads
 backend/backups
 backups
 
-# 小程序（不进镜像，微信开发者工具单独导入）
-miniprogram
-project.config.json
-
 # CI / 本地工具 / 文档档案
 .github
 tools

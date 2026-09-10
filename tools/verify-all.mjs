@@ -19,15 +19,9 @@ const run = (cmd, args, cwd = root) => {
 };
 
 const suites = [
-  { name: '官方编译器 wcsc/wcc', fn: () => run('node', ['check-compile.mjs']) },
-  { name: '运行时诊断（全部模块）', fn: () => run('node', ['tools/diag-runtime.mjs']) },
-  { name: '生命周期模拟（15 页面）', fn: () => run('node', ['tools/lifecycle-test.mjs']) },
-  { name: '页面事件处理器审计', fn: () => run('node', ['tools/handler-audit.mjs']) },
-  { name: '前端API引用审计', fn: () => run('node', ['tools/api-ref-audit.mjs']) },
   { name: '测试数据卫生检查', fn: () => run('node', ['tools/data-hygiene.mjs']) },
   { name: '冒烟测试（33 项）', fn: () => run('node', ['smoke-test.mjs']) },
   { name: '管理端 API 全流程（30 项）', fn: () => run('node', ['tools/admin-api-flow.mjs']) },
-  { name: '认证矩阵（页面×角色 29 项）', fn: () => run('node', ['tools/certify.mjs']) },
   { name: '业务剧本（全链路 21 项）', fn: () => run('node', ['tools/business-flow-test.mjs']) },
   { name: '双计费模式（时效/次数 14 项）', fn: () => run('node', ['tools/billing-mode-test.mjs']) },
   { name: '多孩报名链路（6 项）', fn: () => run('node', ['tools/multikid-enroll-test.mjs']) },
@@ -36,7 +30,6 @@ const suites = [
   { name: '家长扫码签到链路（8 项）', fn: () => run('node', ['tools/parent-checkin-test.mjs']) },
   { name: '提醒定时任务逻辑（7 项）', fn: () => run('node', ['tools/reminders-test.mjs']) },
   { name: 'API边界与越权（21 项）', fn: () => run('node', ['tools/api-edge-test.mjs']) },
-  { name: '小程序接口契约（24 项）', fn: () => run('node', ['tools/api-contract-test.mjs']) },
   { name: '退款边界（6 项）', fn: () => run('node', ['tools/refund-test.mjs']) },
   { name: '管理端工作台链路（7 项）', fn: () => run('node', ['tools/admin-flow-test.mjs']) },
   { name: '管理端深化（添加/取消/字段 7 项）', fn: () => run('node', ['tools/admin-deep-test.mjs']) },

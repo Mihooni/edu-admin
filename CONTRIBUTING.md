@@ -1,7 +1,7 @@
 # 贡献指南（Contributing）
 
 感谢参与！项目是教培/健身机构一体化管理系统
-（Express + SQLite 后端、Vue 3 + Element Plus 管理后台、微信原生小程序）。
+（Express + SQLite 后端、Vue 3 + Element Plus 管理后台）。
 本指南让贡献保持一致、可审查。
 
 ## 基本规则
@@ -9,9 +9,9 @@
 - **后端**：Node.js >= 18，CommonJS，Express + `better-sqlite3`。
   优先沿用 `backend/utils/` 既有辅助函数与路由结构，不新增平行模式。
 - **Web 管理端**：Vue 3 + Element Plus + Pinia，ESM，Vite 5 构建。
-  组件写法跟随 `web-admin/src/views` 现有约定。
-- **小程序**：微信原生（无框架依赖），页面四件套 + `app.json` 注册；
-  新页面必须可被 `node check-mp.mjs` 校验。
+  组件写法跟随 `web-admin/src/views` 现有约定；颜色一律走 `--t-*` 设计
+  token（见 `web-admin/src/styles/index.scss`），深浅色主题双适配，
+  新样式改完跑 `node tools/dark-mode-audit.mjs` 验证。
 - **数据库**：schema 变更一律走 `backend/migrations/` 新增编号迁移
   （见 `backend/migrations/runner.js`），绝不手改 `data.db`。
 - **不提交凭证**：`.env`、真实 AppID、商户密钥、生产数据库文件一律禁止；
@@ -34,7 +34,8 @@
 - 每个 PR 聚焦一件事，无关改动请拆分。
 - 推送前跑隔离回归：`npm run test:backend`（256 项，自建临时库，不动你的数据）。
 - 改了 web-admin 代码：`npm run build:web` 确认可构建。
-- 改了小程序：`node check-mp.mjs` 通过。
+- 改了样式 / 主题：`node tools/dark-mode-audit.mjs --theme dark` 与
+  `--theme light` 两轮亮色像素占比均无异常。
 - 改了环境变量：同一个 PR 里更新 `.env.example` 与 README 的相关说明。
 - PR 描述写清楚：改了什么、为什么、如何验证。
 

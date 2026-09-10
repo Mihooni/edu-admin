@@ -21,7 +21,6 @@ const readStatus = p => {
   catch (e) { return { status: 'unknown', command: p }; }
 };
 const web = readStatus('/tmp/build-web-status.json');
-const mini = readStatus('/tmp/mini-status.json');
 
 // 分组聚合
 const groups = [];
@@ -59,7 +58,7 @@ function groupLabel(g) {
 
 const ts = new Date(rep.at);
 const dateStr = ts.toISOString().slice(0, 10);
-const buildOk = web.status === 0 && mini.status === 0;
+const buildOk = web.status === 0;
 
 // 提取 WARN 明细
 const warns = rep.results.filter(r => r.status === 'WARN');
@@ -103,7 +102,7 @@ let html = `<!DOCTYPE html>
 </style></head><body><div class="wrap">
 <header>
   <h1>教务管理系统 · 全功能系统测试报告</h1>
-  <div class="sub">后端接口穷举 + 前端/小程序编译门禁 · 生成于 ${ts.toLocaleString('zh-CN')} （报告源 ${latest}）</div>
+  <div class="sub">后端接口穷举 + 前端构建门禁 · 生成于 ${ts.toLocaleString('zh-CN')} （报告源 ${latest}）</div>
 </header>
 
 <div class="cards">
@@ -116,7 +115,7 @@ let html = `<!DOCTYPE html>
 <h2>一、执行摘要</h2>
 <div class="sec">
   <p>本次对教务管理系统后端 <b>${rep.total}</b> 项接口用例执行自动化验证，覆盖认证网关、角色权限矩阵、列表读取、核心资源 CRUD、业务流（排课/签到/考勤/会员扣课/订单/请假）、边界与异常六大维度。结果：<b class="pass">${rep.passed} 通过</b>、<b class="${rep.failed ? 'fail' : 'pass'}">${rep.failed} 失败</b>、<b class="${rep.warned ? 'warn' : 'pass'}">${rep.warned} 警告</b>。</p>
-  <p>前端侧两道编译门禁均通过：web-admin <code>npm run build</code> 成功产出 dist；小程序 <code>node check-compile.mjs</code> 校验 45 个 wxss 与全部页面 WXML 通过。<b>整体结论：系统可交付，无阻断性缺陷。</b></p>
+  <p>前端构建门禁通过：web-admin <code>npm run build</code> 成功产出 dist。<b>整体结论：系统可交付，无阻断性缺陷。</b></p>
 </div>
 
 <h2>二、本轮修复的真实缺陷</h2>
@@ -143,11 +142,10 @@ html += `  </tbody>
 </table>
 <p class="badge">A 组：无 token 时全部受保护路由须 401，公开路径（login/health/trial/terms/settings/wxpay-notify）须可访问。B 组：角色越权须 403。C/D 组：合法角色下的数据读写。E/F 组：端到端业务流与异常输入。</p>
 
-<h2>四、构建 / 编译门禁</h2>
+<h2>四、构建门禁</h2>
 <div class="sec">
   <ul>
     <li>web-admin 构建：<span class="pill ${web.status === 0 ? 'ok' : 'bad'}">${web.status === 0 ? 'PASS' : 'FAIL'}</span> <span class="badge">${esc(web.command || '')}</span></li>
-    <li>小程序编译校验：<span class="pill ${mini.status === 0 ? 'ok' : 'bad'}">${mini.status === 0 ? 'PASS' : 'FAIL'}</span> <span class="badge">${esc(mini.command || '')}</span></li>
   </ul>
 </div>
 
@@ -181,7 +179,6 @@ let md = `# 教务管理系统 · 全功能系统测试报告
 | FAIL | ${rep.failed} |
 | WARN（非缺陷） | ${rep.warned} |
 | web-admin 构建 | ${web.status === 0 ? 'PASS' : 'FAIL'} |
-| 小程序编译校验 | ${mini.status === 0 ? 'PASS' : 'FAIL'} |
 
 **结论：系统可交付，无阻断性缺陷。**
 
@@ -201,10 +198,9 @@ for (const g of groups) {
 }
 
 md += `
-## 四、构建 / 编译门禁
+## 四、构建门禁
 
 - web-admin 构建：${web.status === 0 ? 'PASS' : 'FAIL'}（${web.command || ''}）
-- 小程序编译校验：${mini.status === 0 ? 'PASS' : 'FAIL'}（${mini.command || ''}）
 
 ## 五、警告说明（非缺陷）
 

@@ -1,7 +1,7 @@
 {
   "name": "edu-admin-system",
   "version": "1.0.0",
-  "description": "星课 StarClass — 教培/健身机构一体化管理系统：微信小程序 + Web 管理后台，Node.js + Express + SQLite 私有化部署",
+  "description": "星课 StarClass — 教培/健身机构一体化管理系统：Web 管理后台 + API，Node.js + Express + SQLite 私有化部署（可选付费三端小程序）",
   "private": true,
   "scripts": {
     "start": "bash start.sh",
@@ -11,7 +11,6 @@
     "dev:web": "cd web-admin && npm run dev",
     "build:web": "cd web-admin && npm run build",
     "smoke": "node smoke-test.mjs",
-    "check-compile": "node check-compile.mjs",
     "test:backend": "node backend/tests/full-system.test.js",
     "verify": "node tools/verify-all.mjs",
     "install:all": "cd backend && npm install && cd ../web-admin && npm install"

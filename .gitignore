@@ -1,6 +1,5 @@
 # ─── 依赖与构建 ───
 node_modules/
-miniprogram_npm/
 web-admin/dist/
 web-admin/.vite/
 dist/
@@ -25,7 +24,6 @@ tools/uitest/
 backups/
 backend/tests/_qa_checkin_tmp.cjs
 backend/tests/reports/
-miniprogram/design-research.md
 
 # ─── 环境与本地配置 ───
 .env

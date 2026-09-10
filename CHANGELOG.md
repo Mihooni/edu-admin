@@ -14,10 +14,16 @@
 - `tools/dark-mode-audit.mjs`：像素级深浅色双模式审计（--theme dark|light）
 - Docker 一键部署：单镜像（API + 管理后台）、compose 编排、
   Caddy 自动 HTTPS 边车、`deploy/deploy.sh` 与 GitHub Actions Deploy 工作流
-- CI（GitHub Actions）：后端 256 项回归 × Node 18/20/22、小程序静态校验、
+- CI（GitHub Actions）：后端 256 项回归 × Node 18/20/22、
   管理端构建、镜像构建冒烟、敏感信息与运行数据门禁
 - 社区文档：贡献指南、安全策略、行为准则
-- `check-mp.mjs`：跨环境的小程序静态门禁（页面四件套 + JS/JSON 语法）
+
+### 变更
+
+- 三端微信小程序源码拆分至私有商业扩展仓库，主仓聚焦
+  「后端 + Web 工作台」免费一键部署；后端保留微信登录/支付/订阅消息
+  端点（未配置 `WX_*` 环境变量时自动降级），购买小程序部署授权后
+  即可对接
 
 ## [1.0.0] - 2026-09-09
 

@@ -73,7 +73,6 @@ echo -e "\n${BOLD}${CYAN}"
 echo "  ╔═══════════════════════════════════════════════╗"
 echo "  ║  ✅ 全部服务已就绪！                           ║"
 echo "  ║                                               ║"
-echo "  ║  📱 小程序：微信开发者工具导入 miniprogram/    ║"
 if lsof -ti :3000 >/dev/null 2>&1; then
 echo "  ║  🖥️ 管理端：http://localhost:3001（单入口）     ║"
 else
