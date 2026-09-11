@@ -77,7 +77,7 @@ jobs:
         # 下列值是脱敏哨兵：任何被跟踪文件中再出现，说明真实凭证 / 个人信息
         # 泄漏进了仓库（本 CI 定义文件自身除外）。
         run: |
-          if git grep -nE '13900000000|wxd0[0-9a-f]{16}|/Users/huanghoodas|edu-admin-secret|CLOUD_ENV|TENCENT_SMS' -- ':!package-lock.json' ':!.github/workflows/ci.yml'; then
+          if git grep -nE '1992551[0-9]{4}|wxd0[0-9a-f]{14,16}|/Users/huanghoodas|edu-admin-secret|CLOUD_ENV|TENCENT_SMS' -- ':!package-lock.json' ':!.github/workflows/ci.yml'; then
             echo "在被跟踪文件中发现敏感值 —— 拒绝合入。"
             exit 1
           fi
