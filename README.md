@@ -104,7 +104,7 @@ export JWT_SECRET=$(openssl rand -hex 32)   # 必填：生产环境未设置会�
                    │ 同端口静态托管
 ┌──────────────────▼──────────────────────────────┐
 │  Web 管理后台（Vue3 + Element Plus + Vite）       │
-│  首页工作台 · 9 大业务模块 · 单入口 :3001           │
+│  首页工作台 · 7 大业务模块 · 单入口 :3001           │
 │  深色模式 · 浅色 / 深色 / 跟随系统                  │
 └─────────────────────────────────────────────────┘
    （可选付费扩展：家长 / 教练 / 管理三端微信小程序，
@@ -122,15 +122,23 @@ export JWT_SECRET=$(openssl rand -hex 32)   # 必填：生产环境未设置会�
 
 ## 📸 界面预览
 
+**浅色模式**
+
 | 登录 | 数据看板 | 排课管理 |
 |---|---|---|
 | ![登录](docs/screenshots/01-login.png) | ![看板](docs/screenshots/02-dashboard.png) | ![排课](docs/screenshots/03-schedule.png) |
 
-| 点名签到 | 学员档案 | 订单管理 |
+| 点名签到 | 成员档案 | 订单管理 |
 |---|---|---|
-| ![签到](docs/screenshots/04-checkin.png) | ![学员](docs/screenshots/05-students.png) | ![订单](docs/screenshots/07-orders.png) |
+| ![签到](docs/screenshots/04-checkin.png) | ![成员](docs/screenshots/05-students.png) | ![订单](docs/screenshots/07-orders.png) |
 
-更多截图（班级 / 员工 / 设置）见 [`docs/screenshots/`](docs/screenshots/)。
+**🌙 深色模式**（跟随系统 / 浅色 / 深色三档切换）
+
+| 数据看板 | 排课管理 |
+|---|---|
+| ![深色看板](docs/screenshots/10-dark-dashboard.png) | ![深色排课](docs/screenshots/11-dark-schedule.png) |
+
+更多截图（班级 / 请假 / 积分 / 增长 / 通知 / 反馈 / 员工 / 教练课时 / 设置）见 [`docs/screenshots/`](docs/screenshots/)。
 
 ---
 

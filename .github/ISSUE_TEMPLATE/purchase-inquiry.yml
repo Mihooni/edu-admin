@@ -1,0 +1,35 @@
+name: "💰 小程序扩展购买咨询"
+about: 咨询三端微信小程序（家长/教练/管理）付费扩展与部署授权
+title: "[购买咨询] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢关注「星课 StarClass」三端微信小程序扩展！
+        请填写以下信息，方便我们快速对接。
+  - type: input
+    attributes:
+      label: 机构名称 / 业务类型
+      description: 例如：XX 篮球培训（少儿体育）、XX 瑜伽工作室
+      validations:
+        required: true
+  - type: dropdown
+    attributes:
+      label: 你目前已在使用本系统的哪种形态？
+      options:
+        - 尚未部署，先了解
+        - 本机 / 服务器跑通 Web 后台
+        - 已通过 Docker 正式上线
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 想解决的问题 / 定制需求
+      description: 例如：家长端需要续费提醒、教练端需要课时费明细等
+      validations:
+        required: true
+  - type: input
+    attributes:
+      label: 联系方式（微信 / 手机，选填）
+      description: 便于私聊对接；也可只留本 Issue 由我们回复

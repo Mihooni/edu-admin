@@ -1,0 +1,35 @@
+name: "🐛 问题反馈"
+about: 报告部署或使用中遇到的 Bug
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先确认已查阅 [常见问题 FAQ](docs/常见问题FAQ.md) 与 [部署上线说明](部署上线说明.md)。
+  - type: textarea
+    attributes:
+      label: 问题描述
+      description: 发生了什么？期望的行为是什么？
+      validations:
+        required: true
+  - type: textarea
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 打开「排课」页
+        2. 点击「新增排课」
+        3. 报错 / 白屏 / 数据未保存……
+      validations:
+        required: true
+  - type: input
+    attributes:
+      label: 部署方式与版本
+      description: 例如 deploy.sh 本机部署 / Docker；git tag 或 commit
+      placeholder: v1.0.0, deploy.sh, Node 20, macOS
+      validations:
+        required: true
+  - type: textarea
+    attributes:
+      label: 相关日志
+      description: backend.log 或浏览器控制台报错（请先脱敏，勿贴真实手机号/域名）
